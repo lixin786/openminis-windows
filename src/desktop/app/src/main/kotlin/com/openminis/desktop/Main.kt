@@ -58,7 +58,7 @@ fun main(args: Array<String>) {
             ))
         }
         Window(
-            onCloseRequest = { savePlacement(); exitApplication() },
+            onCloseRequest = { savePlacement(); state.shutdown(); exitApplication() },
             title = "OpenMinis",
             state = windowState,
             icon = painterResource("icon.png"),
@@ -89,7 +89,7 @@ fun main(args: Array<String>) {
                     Item("Open workspace folder", onClick = { state.openInExplorer(state.settings.workspace()) })
                     Item("Open data folder", onClick = { state.openInExplorer(paths.root) })
                     Separator()
-                    Item("Exit", onClick = { savePlacement(); exitApplication() })
+                    Item("Exit", onClick = { savePlacement(); state.shutdown(); exitApplication() })
                 }
                 Menu("Chat", mnemonic = 'C') {
                     Item("Stop generating", enabled = state.isRunning, onClick = { state.stop() })

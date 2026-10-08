@@ -40,7 +40,8 @@ fun SettingsDialog(state: AppState, onClose: () -> Unit) {
     var draft by remember { mutableStateOf(state.settings) }
     var editing by remember { mutableStateOf(state.settings.activeProvider) }
     var subDraft by remember { mutableStateOf(state.subAgentConfig) }
-    val save = { state.updateSettings(draft); state.updateSubAgentConfig(subDraft); onClose() }
+    var mcpDraft by remember { mutableStateOf(state.mcp.servers) }
+    val save = { state.updateSettings(draft); state.updateSubAgentConfig(subDraft); if (mcpDraft != state.mcp.servers) state.updateMcpServers(mcpDraft); onClose() }
     DialogWindow(
         onCloseRequest = onClose, title = "OpenMinis Settings",
         state = rememberDialogState(size = settingsDialogSize()),
@@ -181,6 +182,9 @@ fun SettingsDialog(state: AppState, onClose: () -> Unit) {
                                 if (chooser.showOpenDialog(null) == JFileChooser.APPROVE_OPTION) draft = draft.copy(workspaceDir = chooser.selectedFile.absolutePath)
                             }) { Text("Browse…") }
                         }
+
+                        Section("MCP servers")
+                        McpSection(state, mcpDraft) { mcpDraft = it }
 
                         Section("Sub agents")
                         SubAgentSection(subDraft, draft, state.toolNames()) { subDraft = it }

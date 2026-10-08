@@ -12,7 +12,11 @@ import org.json.JSONObject
 import java.io.File
 
 /** What the UI is asked to approve before a side-effecting tool runs. */
-data class ApprovalRequest(val toolName: String, val summary: String, val detail: String)
+data class ApprovalRequest(
+    val toolName: String, val summary: String, val detail: String,
+    /** What "Always allow" means for this request; null = the tool's default (shell / file confirmation off). */
+    val onAlwaysAllow: (() -> Unit)? = null,
+)
 
 fun interface ToolApprover {
     suspend fun approve(request: ApprovalRequest): Boolean

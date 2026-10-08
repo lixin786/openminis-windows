@@ -108,14 +108,26 @@ class AppState(val paths: AppPaths, private val scope: CoroutineScope) {
             }
         },
     )
+    // [P1-1] MCP stdio servers (mcp_servers.json); their tools join the main loop's toolbox.
+    val mcp = com.openminis.desktop.mcp.McpManager(
+        com.openminis.desktop.mcp.McpStore(File(paths.root, "mcp_servers.json"), File(paths.root, "mcp_trust.json")),
+        approver, { settings.workspace() },
+    )
+    /** Bumped whenever an MCP server's status changes (settings list recomposes). */
+    var mcpTick by mutableStateOf(0)
+        private set
     private val engine = AgentEngine(
         providerFactory = { s, ref -> DesktopProviderFactory.create(s, ref) },
-        tools = subAgents.toolbox(com.openminis.desktop.agent.RegistryToolbox(tools)),
+        tools = subAgents.toolbox(com.openminis.desktop.mcp.McpToolbox(com.openminis.desktop.agent.RegistryToolbox(tools), mcp)),
         shaper = shaper,
     )
 
     /** Tool names a sub agent can be restricted to (for the settings editor). */
     fun toolNames(): List<String> = tools.definitions().map { it.name } + com.openminis.desktop.subagents.SubAgentProtocol.TOOL_NAME
+
+    fun updateMcpServers(list: List<com.openminis.desktop.mcp.McpServerConfig>) = scope.launch(Dispatchers.IO) { mcp.setServers(list) }
+    fun connectMcp(sv: com.openminis.desktop.mcp.McpServerConfig) = scope.launch(Dispatchers.IO) { mcp.connect(sv) }
+    fun shutdown() { runCatching { mcp.shutdown() } }
 
     fun updateSubAgentConfig(c: com.openminis.desktop.subagents.SubAgentConfig) {
         subAgentConfig = c.normalized()
@@ -126,10 +138,28 @@ class AppState(val paths: AppPaths, private val scope: CoroutineScope) {
     private fun mainPrompt(s: AppSettings): String {
         val base = SystemPrompt.build(s, memory, skills)
         val roster = if (s.toolsEnabled) subAgents.promptSection(0) else ""
-        return if (roster.isBlank()) base else base + "\n\n" + roster
+        val mcpPart = if (s.toolsEnabled) mcpPromptSection() else ""
+        return listOf(base, roster, mcpPart).filter { it.isNotBlank() }.joinToString("\n\n")
+    }
+
+    /** Upstream MCPRepository.mcpPromptFragment, desktop wording: the tools are native `mcp__…` tools. */
+    private fun mcpPromptSection(): String {
+        val running = mcp.servers.filter { it.enabled && mcp.tools(it.name).isNotEmpty() }.sortedByDescending { it.createdAt }.take(com.openminis.desktop.mcp.McpDefaults.MAX_SERVERS)
+        if (running.isEmpty()) return ""
+        return buildString {
+            appendLine("Available MCP Servers (their tools are offered to you as mcp__<server>__<tool>):")
+            running.forEach { sv ->
+                append("- ").append(sv.name)
+                val note = sv.note.let { if (it.length > com.openminis.desktop.mcp.McpDefaults.MAX_NOTE_LENGTH) it.take(com.openminis.desktop.mcp.McpDefaults.MAX_NOTE_LENGTH) + "…" else it }
+                if (note.isNotBlank()) append(": ").append(note)
+                appendLine()
+            }
+        }.trim()
     }
 
     init {
+        mcp.onChange = { scope.launch(Dispatchers.Main) { mcpTick++ } }
+        Runtime.getRuntime().addShutdownHook(Thread { runCatching { mcp.shutdown() } })
         com.openminis.desktop.net.DesktopHttp.update(settings.network)
         conversations.addAll(store.loadAll())
         newChat()
@@ -269,6 +299,10 @@ class AppState(val paths: AppPaths, private val scope: CoroutineScope) {
         job = scope.launch {
             var final: ChatMessage? = null
             try {
+                if (s.toolsEnabled && mcp.servers.any { it.enabled }) {
+                    val problems = withContext(Dispatchers.IO) { mcp.prepare() }
+                    if (problems.isNotEmpty()) withContext(Dispatchers.Main) { toast = problems.joinToString("\n") }
+                }
                 val prompt = withContext(Dispatchers.IO) { mainPrompt(s) }
                 final = withContext(Dispatchers.IO) { engine.runTurn(history, s, prompt, ctx, listener) }
             } catch (e: CancellationException) {
@@ -344,7 +378,9 @@ class AppState(val paths: AppPaths, private val scope: CoroutineScope) {
 
     fun answerApproval(allow: Boolean, dontAskAgain: Boolean = false) {
         val p = pendingApproval ?: return
-        if (allow && dontAskAgain) {
+        if (allow && dontAskAgain && (p.request.onAlwaysAllow != null || p.request.toolName == "mcp")) {
+            runCatching { p.request.onAlwaysAllow?.invoke() }
+        } else if (allow && dontAskAgain) {
             updateSettings(
                 if (p.request.toolName == "shell") settings.copy(confirmShellCommands = false)
                 else settings.copy(confirmWritesOutsideWorkspace = false)

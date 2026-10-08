@@ -106,7 +106,7 @@ Status: ✅ done · 🟡 partial · ⬜ not started
 ### P1
 | # | Item | Status | Notes |
 |---|---|---|---|
-| P1-1 | MCP stdio client (`mcp/`) | ⬜ | stdio transport is natural on desktop; upstream also has HTTP/OAuth MCP. |
+| P1-1 | MCP stdio client (`mcp/`) | ✅ | batch2 — see *P1-1 MCP* below. HTTP transport (phone interop) / OAuth: next. |
 | P1-2 | Sub-agents (`agent/jobs`, SubAgentDefinition) | ✅ | batch2 — see *P1-2 Sub agents* below. |
 | P1-3 | Skill import UI (GitHub / zip) + per-conversation skill override | ⬜ | today: folder scan only. |
 | P1-4 | Scheduled tasks via Windows Task Scheduler (`schtasks`), no resident background service | ⬜ | app would be launched headless by the task (`--run-task <id>`). |
@@ -155,6 +155,15 @@ Real-Windows finding after hotfix2: two independent ~3 s killers — the local p
 |---|---|
 | After the HTTP/1.1 downgrade the stream still dies through the proxy (`EOFException`, body bytes=0); nothing tells the user that the proxy is the problem. | `WatchdogListener` now records **every** failed call (`DesktopHttp.StreamFailure`: protocol, route DIRECT / proxy, ms since start / headers, body complete?, origin LOCAL/PEER). When the response headers arrived, then the peer cut the body **through a proxy**, `FallbackChain` shows once per turn: "…cut after its headers while going through HTTP proxy /127.0.0.1:7900 … set Settings → Network → Proxy: Direct, or add <host> to the proxy bypass list", then continues with the normal retry / fallback. Not shown for direct routes, local cancels, HTTP errors, or failures older than the turn. No automatic proxy bypass: going direct can break users who need the proxy to reach the host. |
 | Reset / failure diagnostic was only in the log. | The diagnostic line (and the proxy hint when it applies) is appended to the turn's error text (copyable / reportable), and the HTTP/1.1 downgrade notice carries the reset line too. |
+
+## P1-1 MCP (batch2)
+
+- Config: upstream `MCPRepository` shape and file name (`%APPDATA%\OpenMinis\mcp_servers.json`, `{ "mcpServers": { name: { command, args, env, note, startupTimeoutSeconds, enabled/disabled } } }`), the 4 upstream import variants (Claude Desktop / Cursor JSON pastes in), last-write-wins by name, order kept. Desktop keys: `cwd` (blank = workspace), `callTimeoutSeconds` (default 300 s = upstream stdio), `confirmToolCalls`. `url` entries (HTTP) are kept but not started — the HTTP transport comes with phone interop.
+- Transport: JSON-RPC 2.0 over newline-delimited **UTF-8** stdio (`initialize` protocolVersion 2025-06-18 → `notifications/initialized` → `tools/list` with `nextCursor` paging → `tools/call`), one long-lived multiplexed process per server, stderr kept for the log and error texts, `ping` / `roots/list` answered, `notifications/cancelled` on timeout. Env values expand `$VAR` / `${VAR}` / `$$VAR` / `$${VAR}` (upstream `expand_env`). On Windows a command without extension or ending in `.cmd`/`.bat` (`npx`, `uvx`, …) runs via `cmd.exe /d /c`; stop kills the whole process tree.
+- Safety: starting a server runs a program on the host, so every **new or changed command line** (fingerprint of command, args, env, cwd) asks first — Allow = this app session, Always allow / Settings › Connect = remembered (`mcp_trust.json`). Optional per-server confirmation of each tool call. Shell confirmation unchanged.
+- **Deviation:** upstream gives the model `minis-mcp-cli` inside its Linux guest; the desktop has no guest, so tools are offered natively as `mcp__<server>__<tool>` (provider-safe, ≤ 64 chars) and the system prompt lists the servers with their notes (upstream Top-20 fragment). Nested JSON Schemas pass through to OpenAI / Anthropic and are reduced to Gemini's subset (`AgentToolParam.rawSchema`, `JsonSchemaCompat`).
+- Lifecycle: servers start before a turn when enabled (failures shown as a toast, the turn continues without them), a crash during a call restarts the server (0.5 s / 2 s backoff) and retries; all stopped on exit. Not yet: upstream 10-min idle TTL, per-conversation MCP overrides (`SessionMcpsSheet`), MCP tools inside sub agents.
+- Settings › MCP servers: list with status / tool count / last error, enable switch, Connect, edit (command, args one per line, env KEY=VALUE, cwd, note, startup timeout, per-call confirmation), delete, Import JSON.
 
 ## P1-2 Sub agents (batch2)
 
