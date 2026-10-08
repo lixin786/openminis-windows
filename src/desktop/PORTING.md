@@ -147,6 +147,15 @@ Cloud offload, web apps (`webapp/`), tray icon, terminal UI, models.dev catalog 
 | Can't tell who reset the stream (OkHttp reports a local `call.cancel()` on an HTTP/2 stream with the very same text, `stream was reset: CANCEL`). | `WatchdogListener` logs and appends to the turn error: protocol, ms since call start / since response headers, body bytes, and **reset origin: LOCAL call.cancel() (by whom) / PEER**. Test `localCancelAfterHeadersLooksExactlyLikeTheReport…` proves the local case produces the exact reported message. |
 | Connect/TLS timeout field clamped every keystroke to ≥3 (editing "20" passed through "2" → saved as **3 s**). | No per-keystroke clamp; the watchdog treats values < 3 as the 20 s default, caps at 300, and is additionally disarmed as soon as request headers go out (pooled/coalesced connections). |
 
+## Hotfix 3 (proxy cutting streams)
+
+Real-Windows finding after hotfix2: two independent ~3 s killers — the local proxy (Clash 127.0.0.1:7900) cut SSE at ~3.0 s (curl via proxy: 0 bytes; curl direct: 10.1 s, 58 events), and the gateway reset HTTP/2 streams (`reset origin: PEER`). Working config there: Proxy = Direct + HTTP/1.1 only.
+
+| Issue | Fix |
+|---|---|
+| After the HTTP/1.1 downgrade the stream still dies through the proxy (`EOFException`, body bytes=0); nothing tells the user that the proxy is the problem. | `WatchdogListener` now records **every** failed call (`DesktopHttp.StreamFailure`: protocol, route DIRECT / proxy, ms since start / headers, body complete?, origin LOCAL/PEER). When the response headers arrived, then the peer cut the body **through a proxy**, `FallbackChain` shows once per turn: "…cut after its headers while going through HTTP proxy /127.0.0.1:7900 … set Settings → Network → Proxy: Direct, or add <host> to the proxy bypass list", then continues with the normal retry / fallback. Not shown for direct routes, local cancels, HTTP errors, or failures older than the turn. No automatic proxy bypass: going direct can break users who need the proxy to reach the host. |
+| Reset / failure diagnostic was only in the log. | The diagnostic line (and the proxy hint when it applies) is appended to the turn's error text (copyable / reportable), and the HTTP/1.1 downgrade notice carries the reset line too. |
+
 ## Third-party additions (desktop)
 
 | Library | Version | License | Use |

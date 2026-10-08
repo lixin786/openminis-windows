@@ -328,8 +328,12 @@ class AgentEngine(
             val detail = e.message ?: e.javaClass.simpleName
             val stall = com.openminis.desktop.net.DesktopHttp.lastStall
                 ?.takeIf { it.first >= turnStartedAt }?.second?.let { "\n\n$it" } ?: ""
-            val reset = com.openminis.desktop.net.DesktopHttp.lastReset
-                ?.takeIf { it.first >= turnStartedAt }?.second?.let { "\n\n$it" } ?: ""
+            // [hotfix3] Diagnostic of the last failed call (reset origin, protocol, route, timings) in
+            // the user-visible / reportable error text, plus the proxy hint when it applies.
+            val reset = com.openminis.desktop.net.DesktopHttp.lastFailure
+                ?.takeIf { it.atMs >= turnStartedAt }
+                ?.let { f -> "\n\n${f.text}" + (if (f.looksLikeProxyCut) com.openminis.desktop.net.DesktopHttp.proxyCutHint("https://${f.host}")?.let { "\n$it" } ?: "" else "") }
+                ?: ""
             val extra = stall + reset + (chain.unavailableSummary()?.let { "\n\nFallback models skipped:\n$it" } ?: "")
             return snapshot(error = detail + extra).also(listener::onUpdate)
         }

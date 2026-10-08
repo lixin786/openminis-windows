@@ -77,7 +77,12 @@ class FallbackChain(
     private val baseUrlOf: (ModelRef) -> String? = { settings.provider(it.provider).effectiveBaseUrl(it.provider) },
     /** [DesktopHttp.downgradeToHttp1]; injectable for tests. */
     private val downgradeToHttp1: (baseUrl: String?, why: String) -> Boolean = DesktopHttp::downgradeToHttp1,
+    /** [DesktopHttp.proxyCutHint]; injectable for tests. */
+    private val proxyHint: (baseUrl: String?) -> String? = DesktopHttp::proxyCutHint,
+    private val failureFor: (baseUrl: String?) -> DesktopHttp.StreamFailure? = { DesktopHttp.lastFailureFor(it) },
 ) {
+    private var proxyHintShown = false
+    private val createdAtMs = System.currentTimeMillis()
     val refs: List<ModelRef> = settings.modelChain()
     var index: Int = 0
         private set
@@ -121,13 +126,27 @@ class FallbackChain(
         // text/event-stream header) is a protocol-level failure: retrying the same HTTP/2 stream just
         // fails the same way, so rebuild this member's provider HTTP/1.1-only and retry at once,
         // without spending the same-model retry budget. Once per host per session (Auto mode only).
-        if (DesktopHttp.isHttp2StreamReset(actual) && downgradeToHttp1(baseUrlOf(currentRef), actual.message ?: "stream reset")) {
+        val baseUrl = baseUrlOf(currentRef)
+        if (DesktopHttp.isHttp2StreamReset(actual) && downgradeToHttp1(baseUrl, actual.message ?: "stream reset")) {
             providers.remove(index)
-            val msg = "⚠️ ${currentRef.label}: the server reset the HTTP/2 stream — retrying over HTTP/1.1 " +
-                "(kept for this host until restart; Settings → Network → HTTP protocol to make it permanent)."
+            val diag = failureFor(baseUrl)?.let { "\n${it.text}" } ?: ""
+            val msg = "⚠️ ${currentRef.label}: the HTTP/2 stream was reset — retrying over HTTP/1.1 " +
+                "(kept for this host until restart; Settings → Network → HTTP protocol to make it permanent).$diag"
             AppLogger.warning("FallbackChain", msg)
             onNotice(msg)
             return true
+        }
+        // [desktop hotfix3] A stream cut after its headers through a proxy (e.g. Clash cutting SSE
+        // at ~3 s: HTTP/2 → PEER reset, HTTP/1.1 → EOFException) is not fixed by changing protocol.
+        // Say so once per chain, then continue with the normal retry / fallback.
+        val networkish = actual is LLMError.NetworkError || actual is java.io.IOException || actual is LLMError.TransientError
+        val cut = failureFor(baseUrl)?.takeIf { it.atMs >= createdAtMs && it.looksLikeProxyCut }
+        if (!proxyHintShown && networkish && cut != null) {
+            proxyHint(baseUrl)?.let { hint ->
+                proxyHintShown = true
+                AppLogger.warning("FallbackChain", hint)
+                onNotice(hint)
+            }
         }
         if (FallbackPolicy.isTransient(actual) && retryAttempt < retryDelaysMs.size) {
             val wait = retryDelaysMs[retryAttempt]

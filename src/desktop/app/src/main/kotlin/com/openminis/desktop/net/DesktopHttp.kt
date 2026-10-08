@@ -144,6 +144,39 @@ object DesktopHttp {
     @Volatile var lastReset: Pair<Long, String>? = null
         private set
 
+    /** One failed call, as [WatchdogListener] saw it. */
+    data class StreamFailure(
+        val atMs: Long, val host: String, val text: String,
+        /** e.g. "HTTP proxy /127.0.0.1:7900"; null when the call went direct. */
+        val viaProxy: String?,
+        val afterHeaders: Boolean, val bodyComplete: Boolean, val reset: Boolean, val local: Boolean,
+    ) {
+        /** Response headers arrived, then the peer (not us) cut the body — through a proxy. */
+        val looksLikeProxyCut: Boolean get() = viaProxy != null && afterHeaders && !bodyComplete && !local
+    }
+
+    /** Last failed call of any kind (any host). */
+    @Volatile var lastFailure: StreamFailure? = null
+        private set
+    private val failuresByHost = ConcurrentHashMap<String, StreamFailure>()
+
+    fun lastFailureFor(baseUrl: String?, withinMs: Long = 120_000): StreamFailure? =
+        hostOf(baseUrl)?.let { failuresByHost[it] }?.takeIf { System.currentTimeMillis() - it.atMs <= withinMs }
+
+    /**
+     * User-facing hint when a stream to [baseUrl]'s host was cut after its headers while going
+     * through a proxy (seen with Clash on 127.0.0.1:7900 cutting SSE at ~3 s; curl direct streams fine).
+     */
+    fun proxyCutHint(baseUrl: String?): String? {
+        val f = lastFailureFor(baseUrl) ?: return null
+        if (!f.looksLikeProxyCut) return null
+        return "⚠️ The response from ${f.host} was cut after its headers while going through ${f.viaProxy}. " +
+            "Some local proxies cut streaming (SSE) responses after a few seconds. If ${f.host} is reachable without the proxy, " +
+            "set Settings → Network → Proxy: Direct, or add ${f.host} to the proxy bypass list."
+    }
+
+    fun clearFailures() { failuresByHost.clear(); lastFailure = null; lastReset = null }
+
     fun newClient(readTimeoutSeconds: Long = 60): OkHttpClient = harden(
         OkHttpClient.Builder().connectTimeout(30, TimeUnit.SECONDS).readTimeout(readTimeoutSeconds, TimeUnit.SECONDS).writeTimeout(60, TimeUnit.SECONDS).build(),
     )
@@ -261,20 +294,37 @@ object DesktopHttp {
         @Volatile private var protocol: Protocol? = null
         @Volatile private var bodyBytes = -1L
 
-        @Volatile private var resetNoted = false
-        private fun noteReset(call: Call, ioe: IOException) {
-            if (resetNoted || !isHttp2StreamReset(ioe)) return
-            resetNoted = true
+        @Volatile private var proxy: Proxy? = null
+        @Volatile private var failureNoted = false
+
+        /**
+         * Records any I/O failure of a call (HTTP/2 reset, HTTP/1.1 EOF, socket reset…) with what is
+         * needed to tell the causes apart: protocol, route (direct / proxy), timings, whether the
+         * body ever completed, and whether OUR side cancelled first.
+         */
+        private fun noteFailure(call: Call, ioe: IOException) {
+            if (failureNoted) return
+            failureNoted = true
             val now = System.nanoTime()
             fun ms(t: Long) = if (t == 0L) "n/a" else "${(now - t) / 1_000_000}ms"
             // call.isCanceled() flips at the very start of Call.cancel(), before OkHttp sends its own
             // RST_STREAM(CANCEL) — the canceled() event can arrive after the failed read it caused.
-            val who = if (call.isCanceled() || canceledAt != 0L) "LOCAL call.cancel()${if (canceledAt != 0L) " ${ms(canceledAt)} before the reset" else ""}${cancelledBy?.let { " ($it)" } ?: ""}"
+            val local = call.isCanceled() || canceledAt != 0L
+            val who = if (local) "LOCAL call.cancel()${if (canceledAt != 0L) " ${ms(canceledAt)} before the failure" else ""}${cancelledBy?.let { " ($it)" } ?: ""}"
                 else "PEER (no local cancel recorded)"
-            val msg = "HTTP/2 stream reset on ${call.request().url.host}: ${ioe.message}; protocol=${protocol ?: "?"}, " +
-                "since call start ${ms(startedAt)}, since response headers ${ms(headersAt)}, body bytes=${if (bodyBytes < 0) 0 else bodyBytes}; reset origin: $who"
-            lastReset = System.currentTimeMillis() to msg
-            AppLogger.warning("Network", msg)
+            val p = proxy
+            val via = p?.takeIf { it.type() != Proxy.Type.DIRECT }?.let { "${it.type()} proxy ${it.address()}" }
+            val reset = isHttp2StreamReset(ioe)
+            val host = call.request().url.host
+            val text = "${if (reset) "HTTP/2 stream reset" else "Stream failed"} on $host: ${ioe.javaClass.simpleName}: ${ioe.message}; " +
+                "protocol=${protocol ?: "?"}, route=${via ?: if (p == null) "?" else "DIRECT"}, " +
+                "since call start ${ms(startedAt)}, since response headers ${ms(headersAt)}, body bytes=${if (bodyBytes < 0) 0 else bodyBytes}; " +
+                "${if (reset) "reset" else "failure"} origin: $who"
+            val f = StreamFailure(System.currentTimeMillis(), host, text, via, headersAt != 0L, bodyBytes >= 0, reset, local)
+            lastFailure = f
+            failuresByHost[host.lowercase()] = f
+            if (reset) lastReset = f.atMs to text
+            AppLogger.warning("Network", text)
         }
 
         private fun arm(call: Call, phase: () -> String) {
@@ -296,6 +346,7 @@ object DesktopHttp {
 
         @Volatile private var phase = "TCP connect"
         override fun connectStart(call: Call, inetSocketAddress: InetSocketAddress, proxy: Proxy) {
+            this.proxy = proxy
             phase = "TCP connect to $inetSocketAddress${if (proxy.type() != Proxy.Type.DIRECT) " via proxy $proxy" else ""}"
             arm(call) { phase }; inner.connectStart(call, inetSocketAddress, proxy)
         }
@@ -306,7 +357,7 @@ object DesktopHttp {
             disarm(call); AppLogger.warning("Network", "connect failed to $inetSocketAddress via $proxy: ${ioe.message}"); inner.connectFailed(call, inetSocketAddress, proxy, protocol, ioe)
         }
         override fun callEnd(call: Call) { disarm(call); inner.callEnd(call) }
-        override fun callFailed(call: Call, ioe: IOException) { disarm(call); noteReset(call, ioe); inner.callFailed(call, ioe) }
+        override fun callFailed(call: Call, ioe: IOException) { disarm(call); noteFailure(call, ioe); inner.callFailed(call, ioe) }
         override fun canceled(call: Call) {
             if (canceledAt == 0L) canceledAt = System.nanoTime()
             disarm(call); inner.canceled(call)
@@ -317,7 +368,7 @@ object DesktopHttp {
         override fun proxySelectEnd(call: Call, url: okhttp3.HttpUrl, proxies: List<Proxy>) = inner.proxySelectEnd(call, url, proxies)
         override fun dnsStart(call: Call, domainName: String) = inner.dnsStart(call, domainName)
         override fun dnsEnd(call: Call, domainName: String, inetAddressList: List<java.net.InetAddress>) = inner.dnsEnd(call, domainName, inetAddressList)
-        override fun connectionAcquired(call: Call, connection: okhttp3.Connection) { protocol = connection.protocol(); inner.connectionAcquired(call, connection) }
+        override fun connectionAcquired(call: Call, connection: okhttp3.Connection) { protocol = connection.protocol(); proxy = connection.route().proxy; inner.connectionAcquired(call, connection) }
         override fun connectionReleased(call: Call, connection: okhttp3.Connection) = inner.connectionReleased(call, connection)
         // A request on the wire means connect + TLS are done (also covers pooled / coalesced connections).
         override fun requestHeadersStart(call: Call) { disarm(call); inner.requestHeadersStart(call) }
@@ -329,6 +380,6 @@ object DesktopHttp {
         override fun responseHeadersEnd(call: Call, response: Response) { headersAt = System.nanoTime(); inner.responseHeadersEnd(call, response) }
         override fun responseBodyStart(call: Call) = inner.responseBodyStart(call)
         override fun responseBodyEnd(call: Call, byteCount: Long) { bodyBytes = byteCount; inner.responseBodyEnd(call, byteCount) }
-        override fun responseFailed(call: Call, ioe: IOException) { noteReset(call, ioe); inner.responseFailed(call, ioe) }
+        override fun responseFailed(call: Call, ioe: IOException) { noteFailure(call, ioe); inner.responseFailed(call, ioe) }
     }
 }

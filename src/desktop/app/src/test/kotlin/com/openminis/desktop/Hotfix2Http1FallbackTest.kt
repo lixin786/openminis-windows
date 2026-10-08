@@ -39,7 +39,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.*
 
 class Hotfix2Http1FallbackTest {
-    @BeforeTest @AfterTest fun reset() { DesktopHttp.update(NetworkSettings()); DesktopHttp.resetHttp1Downgrades() }
+    @BeforeTest @AfterTest fun reset() { DesktopHttp.update(NetworkSettings()); DesktopHttp.resetHttp1Downgrades(); DesktopHttp.clearFailures() }
 
     private val reset = StreamResetException(ErrorCode.CANCEL)
 
