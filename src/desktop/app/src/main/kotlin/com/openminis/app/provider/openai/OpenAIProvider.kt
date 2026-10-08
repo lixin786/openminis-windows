@@ -924,6 +924,7 @@ class OpenAIProvider private constructor(
         val headersArrived = java.util.concurrent.atomic.AtomicBoolean(false)
         val callStartNanos = System.nanoTime()
         val ttfbWatchdog = launch {
+          try {
             val pollMs = 250L
             var timedOutPhase: String? = null
             while (!headersArrived.get()) {
@@ -957,6 +958,13 @@ class OpenAIProvider private constructor(
                     // Best-effort; call.cancel() already unblocks execute().
                 }
             }
+          } catch (e: kotlinx.coroutines.CancellationException) {
+            // [desktop] The flow was cancelled (user pressed Stop, a sub agent was stopped) while
+            // execute() is still blocked waiting for response headers: that thread cannot see the
+            // coroutine cancellation, so unblock it here instead of waiting for the server / TTFB budget.
+            if (!headersArrived.get()) call.cancel()
+            throw e
+          }
         }
         val response = try {
             call.execute()

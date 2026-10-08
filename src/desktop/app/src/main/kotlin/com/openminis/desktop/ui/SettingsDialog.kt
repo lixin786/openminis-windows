@@ -39,6 +39,8 @@ import javax.swing.JFileChooser
 fun SettingsDialog(state: AppState, onClose: () -> Unit) {
     var draft by remember { mutableStateOf(state.settings) }
     var editing by remember { mutableStateOf(state.settings.activeProvider) }
+    var subDraft by remember { mutableStateOf(state.subAgentConfig) }
+    val save = { state.updateSettings(draft); state.updateSubAgentConfig(subDraft); onClose() }
     DialogWindow(
         onCloseRequest = onClose, title = "OpenMinis Settings",
         state = rememberDialogState(size = settingsDialogSize()),
@@ -47,7 +49,7 @@ fun SettingsDialog(state: AppState, onClose: () -> Unit) {
             if (ev.type != androidx.compose.ui.input.key.KeyEventType.KeyDown) false
             else when {
                 ev.key == androidx.compose.ui.input.key.Key.Escape -> { onClose(); true }
-                ev.isCtrlPressed && (ev.key == androidx.compose.ui.input.key.Key.S || ev.key == androidx.compose.ui.input.key.Key.Enter) -> { state.updateSettings(draft); onClose(); true }
+                ev.isCtrlPressed && (ev.key == androidx.compose.ui.input.key.Key.S || ev.key == androidx.compose.ui.input.key.Key.Enter) -> { save(); true }
                 else -> false
             }
         },
@@ -180,6 +182,9 @@ fun SettingsDialog(state: AppState, onClose: () -> Unit) {
                             }) { Text("Browse…") }
                         }
 
+                        Section("Sub agents")
+                        SubAgentSection(subDraft, draft, state.toolNames()) { subDraft = it }
+
                         Section("Memory")
                         Toggle("Enable memory (memory_write / memory_get + prompt context)", draft.memoryEnabled) { draft = draft.copy(memoryEnabled = it) }
                         Row {
@@ -203,7 +208,7 @@ fun SettingsDialog(state: AppState, onClose: () -> Unit) {
                     Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.End) {
                         TextButton(onClick = onClose) { Text("Cancel (Esc)") }
                         Spacer(Modifier.width(8.dp))
-                        Button(onClick = { state.updateSettings(draft); onClose() }) { Text("Save (Ctrl+S)") }
+                        Button(onClick = { save() }) { Text("Save (Ctrl+S)") }
                     }
                 }
             }
@@ -211,16 +216,16 @@ fun SettingsDialog(state: AppState, onClose: () -> Unit) {
     }
 }
 
-@Composable private fun Section(title: String) {
+@Composable internal fun Section(title: String) {
     Spacer(Modifier.height(18.dp))
     Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
     HorizontalDivider(Modifier.padding(vertical = 6.dp))
 }
 
-@Composable private fun Hint(text: String) =
+@Composable internal fun Hint(text: String) =
     Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 4.dp))
 
-@Composable private fun Toggle(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+@Composable internal fun Toggle(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
         Text(label, Modifier.weight(1f))
         // Focusable with Tab, toggled with Space; the label is the accessible name.
@@ -279,7 +284,7 @@ internal fun settingsDialogSize(): DpSize {
     })
 }
 
-@Composable private fun NumberField(label: String, value: Int, modifier: Modifier, onChange: (Int) -> Unit) {
+@Composable internal fun NumberField(label: String, value: Int, modifier: Modifier, onChange: (Int) -> Unit) {
     var text by remember(value) { mutableStateOf(value.toString()) }
     OutlinedTextField(
         value = text, singleLine = true, label = { Text(label) }, modifier = modifier.tabMovesFocus(),

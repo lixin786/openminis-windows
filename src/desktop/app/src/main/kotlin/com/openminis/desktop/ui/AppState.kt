@@ -87,7 +87,47 @@ class AppState(val paths: AppPaths, private val scope: CoroutineScope) {
         try { d.await() } finally { withContext(Dispatchers.Main + kotlinx.coroutines.NonCancellable) { pendingApproval = null } }
     }
     private val tools = ToolRegistry({ settings }, memory, approver)
-    private val engine = AgentEngine({ s, ref -> DesktopProviderFactory.create(s, ref) }, tools, shaper)
+
+    // [P1-2] Sub agents: roster in subagents.json; the main loop's toolbox gains `subagent_task`.
+    private val subAgentStore = com.openminis.desktop.subagents.SubAgentStore(File(paths.root, "subagents.json"))
+    var subAgentConfig by mutableStateOf(subAgentStore.load())
+        private set
+    /** Sub agent runs of this app session (newest last), for the chat status block. */
+    val subAgentRuns = mutableStateListOf<com.openminis.desktop.subagents.SubAgentRun>()
+    val subAgents = com.openminis.desktop.subagents.SubAgentManager(
+        providerFactory = { s, ref -> DesktopProviderFactory.create(s, ref) },
+        config = { subAgentConfig },
+        // A child's shell / file approvals go through the same dialog as the parent's (labelled with the agent).
+        childRegistry = { appr -> ToolRegistry({ settings }, memory, appr) },
+        approver = approver,
+        childPromptBase = { s -> SystemPrompt.build(s, memory, skills) },
+        onProgress = { r ->
+            scope.launch(Dispatchers.Main) {
+                val i = subAgentRuns.indexOfFirst { it.jobId == r.jobId }
+                if (i >= 0) subAgentRuns[i] = r else { subAgentRuns.add(r); while (subAgentRuns.size > 50) subAgentRuns.removeAt(0) }
+            }
+        },
+    )
+    private val engine = AgentEngine(
+        providerFactory = { s, ref -> DesktopProviderFactory.create(s, ref) },
+        tools = subAgents.toolbox(com.openminis.desktop.agent.RegistryToolbox(tools)),
+        shaper = shaper,
+    )
+
+    /** Tool names a sub agent can be restricted to (for the settings editor). */
+    fun toolNames(): List<String> = tools.definitions().map { it.name } + com.openminis.desktop.subagents.SubAgentProtocol.TOOL_NAME
+
+    fun updateSubAgentConfig(c: com.openminis.desktop.subagents.SubAgentConfig) {
+        subAgentConfig = c.normalized()
+        scope.launch(Dispatchers.IO) { subAgentStore.save(subAgentConfig) }
+    }
+
+    /** Main-chat system prompt: base + the sub agent roster when delegation is available. */
+    private fun mainPrompt(s: AppSettings): String {
+        val base = SystemPrompt.build(s, memory, skills)
+        val roster = if (s.toolsEnabled) subAgents.promptSection(0) else ""
+        return if (roster.isBlank()) base else base + "\n\n" + roster
+    }
 
     init {
         com.openminis.desktop.net.DesktopHttp.update(settings.network)
@@ -229,7 +269,7 @@ class AppState(val paths: AppPaths, private val scope: CoroutineScope) {
         job = scope.launch {
             var final: ChatMessage? = null
             try {
-                val prompt = withContext(Dispatchers.IO) { SystemPrompt.build(s, memory, skills) }
+                val prompt = withContext(Dispatchers.IO) { mainPrompt(s) }
                 final = withContext(Dispatchers.IO) { engine.runTurn(history, s, prompt, ctx, listener) }
             } catch (e: CancellationException) {
                 final = latest.get()
@@ -291,7 +331,7 @@ class AppState(val paths: AppPaths, private val scope: CoroutineScope) {
         val conv = conversations.firstOrNull { it.id == convId } ?: return
         val s = settings
         scope.launch(Dispatchers.IO) {
-            val r = runCatching { engine.measure(conv.messages, s, SystemPrompt.build(s, memory, skills), contextStateFor(conv)) }.getOrNull()
+            val r = runCatching { engine.measure(conv.messages, s, mainPrompt(s), contextStateFor(conv)) }.getOrNull()
             withContext(Dispatchers.Main) { if (r != null) contextReadings[convId] = r else contextReadings.remove(convId) }
         }
     }

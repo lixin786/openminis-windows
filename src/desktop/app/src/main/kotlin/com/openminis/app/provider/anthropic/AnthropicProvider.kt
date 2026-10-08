@@ -20,6 +20,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -142,7 +143,12 @@ class AnthropicProvider(
             headerMap[name] = request.headers[name] ?: ""
         }
 
-        val response = client.newCall(request).execute()
+        // [desktop] Stop while waiting for response headers: execute() blocks a thread that cannot see
+        // coroutine cancellation, so a guard child cancels the call (otherwise Stop waits for the server).
+        val call = client.newCall(request)
+        val headersDone = java.util.concurrent.atomic.AtomicBoolean(false)
+        val cancelGuard = launch { try { kotlinx.coroutines.awaitCancellation() } finally { if (!headersDone.get()) call.cancel() } }
+        val response = try { call.execute() } finally { headersDone.set(true); cancelGuard.cancel() }
         val durationMs = System.currentTimeMillis() - startTime
 
         if (!response.isSuccessful) {

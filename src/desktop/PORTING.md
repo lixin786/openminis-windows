@@ -107,7 +107,7 @@ Status: ✅ done · 🟡 partial · ⬜ not started
 | # | Item | Status | Notes |
 |---|---|---|---|
 | P1-1 | MCP stdio client (`mcp/`) | ⬜ | stdio transport is natural on desktop; upstream also has HTTP/OAuth MCP. |
-| P1-2 | Sub-agents (`agent/jobs`, SubAgentDefinition) | ⬜ | data model already ported. |
+| P1-2 | Sub-agents (`agent/jobs`, SubAgentDefinition) | ✅ | batch2 — see *P1-2 Sub agents* below. |
 | P1-3 | Skill import UI (GitHub / zip) + per-conversation skill override | ⬜ | today: folder scan only. |
 | P1-4 | Scheduled tasks via Windows Task Scheduler (`schtasks`), no resident background service | ⬜ | app would be launched headless by the task (`--run-task <id>`). |
 
@@ -155,6 +155,16 @@ Real-Windows finding after hotfix2: two independent ~3 s killers — the local p
 |---|---|
 | After the HTTP/1.1 downgrade the stream still dies through the proxy (`EOFException`, body bytes=0); nothing tells the user that the proxy is the problem. | `WatchdogListener` now records **every** failed call (`DesktopHttp.StreamFailure`: protocol, route DIRECT / proxy, ms since start / headers, body complete?, origin LOCAL/PEER). When the response headers arrived, then the peer cut the body **through a proxy**, `FallbackChain` shows once per turn: "…cut after its headers while going through HTTP proxy /127.0.0.1:7900 … set Settings → Network → Proxy: Direct, or add <host> to the proxy bypass list", then continues with the normal retry / fallback. Not shown for direct routes, local cancels, HTTP errors, or failures older than the turn. No automatic proxy bypass: going direct can break users who need the proxy to reach the host. |
 | Reset / failure diagnostic was only in the log. | The diagnostic line (and the proxy hint when it applies) is appended to the turn's error text (copyable / reportable), and the HTTP/1.1 downgrade notice carries the reset line too. |
+
+## P1-2 Sub agents (batch2)
+
+- Tool `subagent_task` with upstream's schema (same name, params, enums, required list); roster = upstream `SubAgentDefinition` / `SubAgentRoster` (built-in "General Sub Agent" + up to 10 user agents, upstream length limits), persisted in `%APPDATA%\OpenMinis\subagents.json`. Settings › Sub agents: on/off, concurrency (default 3, upstream), delegation depth (default 1 = upstream; max 3, never unbounded), default / light model for `model_choice`, per-agent name / description / instructions / pinned model / allowed tools.
+- Each delegation runs its own `AgentEngine` loop (identity + instructions sections from upstream `HelperRunner`, own tool subset, never `memory_write`), model resolved like upstream `ModelTierResolver` (pinned > model_choice; unusable → inherit), parent chain kept as fallback. Several `subagent_task` calls in one round run in parallel up to the concurrency limit.
+- **Deviation:** upstream runs helpers in the background and delivers `[Background task finished …]` later; desktop runs them in the foreground of the tool call (`wait` always true; `steer` / `cancel` / `resume` return `unsupported_action`). The user's Stop cancels the parent and every child.
+- Shell / file approvals of a child go through the same confirmation dialog, labelled `Sub agent «name»: …`, one at a time; confirmation defaults are untouched.
+- Chat shows a live block per running sub agent (agent, title, state, current tool, elapsed, model; click to expand its latest output).
+- Engine: `AgentEngine` takes a `Toolbox` (ToolRegistry wrapped) and installs an `AgentTurnContext` (settings, current model, depth) around tool execution.
+- Fix found while testing: Stop while waiting for response headers used to block until the server answered (the blocking `execute()` never saw the coroutine cancel); all three providers now cancel the HTTP call on coroutine cancellation.
 
 ## Third-party additions (desktop)
 

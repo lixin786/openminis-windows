@@ -39,6 +39,10 @@ import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -74,11 +78,21 @@ sealed class CompactOutcome {
 
 class AgentEngine(
     private val providerFactory: (AppSettings, ModelRef) -> LLMProvider,
-    private val tools: ToolRegistry,
+    private val tools: Toolbox,
     private val shaper: AttachmentShaper? = null,
     private val retryDelaysMs: List<Long> = FallbackPolicy.DEFAULT_RETRY_DELAYS_MS,
     private val compactIdleTimeoutMs: Long = Compaction.COMPACT_IDLE_TIMEOUT_MS,
+    /** [P1-2] Delegation depth of this loop: 0 = main chat, 1 = a sub agent, … */
+    val depth: Int = 0,
 ) {
+    constructor(
+        providerFactory: (AppSettings, ModelRef) -> LLMProvider,
+        tools: ToolRegistry,
+        shaper: AttachmentShaper? = null,
+        retryDelaysMs: List<Long> = FallbackPolicy.DEFAULT_RETRY_DELAYS_MS,
+        compactIdleTimeoutMs: Long = Compaction.COMPACT_IDLE_TIMEOUT_MS,
+    ) : this(providerFactory, RegistryToolbox(tools), shaper, retryDelaysMs, compactIdleTimeoutMs, 0)
+
     companion object {
         private const val TAG = "AgentEngine"
         /** Automatic compactions allowed inside one turn before the loop stops trying. */
@@ -284,31 +298,51 @@ class AgentEngine(
                 }
 
                 // Execute tool calls sequentially (shell approvals are serialized for the user anyway).
+                // [P1-2] Exception: consecutive calls of a concurrent tool (subagent_task) run in parallel,
+                // like upstream's "several delegations in one turn"; the sub agent manager bounds them.
                 val executed = current.toolCalls.toMutableList()
-                for (i in executed.indices) {
-                    val call = executed[i]
+                val lock = Any()
+                val turnCtx = AgentTurnContext(settings, chain.currentRef, depth)
+                suspend fun executeOne(i: Int) {
+                    val call = synchronized(lock) { executed[i] }
                     val args = runCatching { JSONObject(call.argsJson) }.getOrElse { JSONObject() }
                     val params = jsonToMap(args)
-                    val check = detector.check(call.name, params)
+                    val check = synchronized(lock) { detector.check(call.name, params) }
                     if (check.level == Level.CRITICAL) {
-                        executed[i] = call.copy(status = ToolStatus.FAILED, isError = true, result = check.message ?: "Loop blocked")
-                        current = current.copy(toolCalls = executed.toList()); emit(true)
-                        continue
+                        synchronized(lock) {
+                            executed[i] = call.copy(status = ToolStatus.FAILED, isError = true, result = check.message ?: "Loop blocked")
+                            current = current.copy(toolCalls = executed.toList()); emit(true)
+                        }
+                        return
                     }
-                    executed[i] = call.copy(status = ToolStatus.RUNNING)
-                    current = current.copy(toolCalls = executed.toList()); emit(true)
+                    synchronized(lock) {
+                        executed[i] = call.copy(status = ToolStatus.RUNNING)
+                        current = current.copy(toolCalls = executed.toList()); emit(true)
+                    }
                     val started = System.currentTimeMillis()
-                    val outcome = tools.execute(call.name, args)
+                    val outcome = withContext(turnCtx) { tools.execute(call.name, args) }
                     var content = outcome.content
-                    val rec = detector.record(call.name, params, if (outcome.isError) null else content, if (outcome.isError) content else null, call.id)
-                    if (rec.level != Level.NONE && rec.message != null) content += "\n\n${rec.message}"
-                    else if (check.level == Level.WARNING && check.message != null) content += "\n\n${check.message}"
-                    executed[i] = executed[i].copy(
-                        result = content, isError = outcome.isError,
-                        status = when { outcome.denied -> ToolStatus.DENIED; outcome.isError -> ToolStatus.FAILED; else -> ToolStatus.DONE },
-                        durationMs = System.currentTimeMillis() - started,
-                    )
-                    current = current.copy(toolCalls = executed.toList()); emit(true)
+                    synchronized(lock) {
+                        val rec = detector.record(call.name, params, if (outcome.isError) null else content, if (outcome.isError) content else null, call.id)
+                        if (rec.level != Level.NONE && rec.message != null) content += "\n\n${rec.message}"
+                        else if (check.level == Level.WARNING && check.message != null) content += "\n\n${check.message}"
+                        executed[i] = executed[i].copy(
+                            result = content, isError = outcome.isError,
+                            status = when { outcome.denied -> ToolStatus.DENIED; outcome.isError -> ToolStatus.FAILED; else -> ToolStatus.DONE },
+                            durationMs = System.currentTimeMillis() - started,
+                        )
+                        current = current.copy(toolCalls = executed.toList()); emit(true)
+                    }
+                }
+                var i = 0
+                while (i < executed.size) {
+                    if (!tools.runsConcurrently(executed[i].name)) { executeOne(i); i++; continue }
+                    var j = i
+                    while (j < executed.size && tools.runsConcurrently(executed[j].name)) j++
+                    val batch = (i until j).toList()
+                    if (batch.size == 1) executeOne(i)
+                    else coroutineScope { batch.map { k -> async { executeOne(k) } }.awaitAll() }
+                    i = j
                 }
                 rounds += current
                 current = Round()

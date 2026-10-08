@@ -281,6 +281,7 @@ private fun ChatPane(state: AppState, modifier: Modifier) {
                 }
             }
         }
+        if (state.runningConversationId == conv?.id) SubAgentBlock(state)
         val status = state.statusText.takeIf { state.runningConversationId == conv?.id || state.compactingConversationId == conv?.id }
         if (status != null || state.compactingConversationId == conv?.id) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -290,6 +291,35 @@ private fun ChatPane(state: AppState, modifier: Modifier) {
             }
         }
         Composer(state)
+    }
+}
+
+/** [P1-2] Sub agents running for the current turn: agent, task title, current tool, elapsed; expandable output tail. */
+@Composable
+private fun SubAgentBlock(state: AppState) {
+    val active = state.subAgentRuns.filter { it.isActive }
+    if (active.isEmpty()) return
+    var now by remember { mutableStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(active.size) { while (true) { kotlinx.coroutines.delay(1000); now = System.currentTimeMillis() } }
+    Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 4.dp)) {
+        active.forEach { r ->
+            var open by remember(r.jobId) { mutableStateOf(false) }
+            Surface(tonalElevation = 2.dp, shape = MaterialTheme.shapes.small, modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
+                Column(Modifier.clickable { open = !open }.padding(8.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (r.state == "running") CircularProgressIndicator(Modifier.size(12.dp), strokeWidth = 2.dp)
+                        Spacer(Modifier.width(8.dp))
+                        val elapsed = (now - r.startedAt).coerceAtLeast(0) / 1000
+                        Text("${if (open) "▾" else "▸"} Sub agent «${r.agent}» · ${r.title} · ${r.state}" +
+                            (r.currentTool?.let { " · $it" } ?: "") + " · ${elapsed}s · ${r.model}",
+                            style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    if (open && r.latestText.isNotBlank()) {
+                        Text(r.latestText, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp))
+                    }
+                }
+            }
+        }
     }
 }
 
