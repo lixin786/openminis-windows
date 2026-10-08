@@ -1,0 +1,89 @@
+# Builds the OpenMinis Windows desktop app (src/desktop, Compose Multiplatform for Desktop).
+# jpackage cannot cross-build Windows installers, so MSI/EXE are produced on windows-latest.
+# Copyright (C) OpenMinis contributors. Licensed under the GNU GPL v3 (see LICENSE).
+name: Desktop (Windows)
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - "src/desktop/**"
+      - ".github/workflows/desktop-windows.yml"
+  pull_request:
+    paths:
+      - "src/desktop/**"
+      - ".github/workflows/desktop-windows.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: src/desktop
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17 (Temurin, includes jpackage)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Unit tests
+        run: ./gradlew.bat :desktop:test --no-daemon --stacktrace
+
+      - name: Build MSI + EXE installers and uber-jars
+        run: >
+          ./gradlew.bat
+          :desktop:packageMsi
+          :desktop:packageExe
+          :desktop:packageUberJarForCurrentOS
+          :desktop:windowsUberJar
+          --no-daemon --stacktrace
+
+      - name: List outputs
+        run: Get-ChildItem -Recurse app/build/compose/binaries, app/build/compose/jars, app/build/libs -File | Select-Object FullName, Length
+
+      - name: Upload MSI
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenMinis-msi
+          path: src/desktop/app/build/compose/binaries/main/msi/*.msi
+          if-no-files-found: error
+
+      - name: Upload EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenMinis-exe
+          path: src/desktop/app/build/compose/binaries/main/exe/*.exe
+          if-no-files-found: error
+
+      - name: Upload uber-jars (need Java 17+)
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenMinis-jar
+          path: |
+            src/desktop/app/build/compose/jars/*.jar
+            src/desktop/app/build/libs/OpenMinis-windows-x64-*.jar
+          if-no-files-found: error
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: src/desktop/app/build/reports/tests/
+          if-no-files-found: ignore
