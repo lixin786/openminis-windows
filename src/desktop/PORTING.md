@@ -139,6 +139,14 @@ Cloud offload, web apps (`webapp/`), tray icon, terminal UI, models.dev catalog 
 | Window opened larger than a 1280×800 HiDPI screen | `core/WindowPlacement.kt`: clamp to the usable area (logical px), center, remember position/size in `window.json`, restore only if ≥60 % lies on a current monitor. Settings window clamped too. |
 | Keyboard use of the approval dialog | Enter = Allow, Esc = Deny, Ctrl+Enter / A = Always allow, Allow button focused, hints on buttons, main window brought to front. Settings: Esc = cancel, Ctrl+S = save. Tab/Shift+Tab leave text fields. contentDescription on key controls. Screen readers need Java Access Bridge enabled (`jabswitch -enable`); Compose's accessibility tree is exposed through it — not verified with Narrator/NVDA here. |
 
+## Hotfix 2 (HTTP/2 stream reset at +3004 ms)
+
+| Issue | Fix |
+|---|---|
+| OkHttp over HTTP/2: `200 text/event-stream` headers arrive, then `StreamResetException: stream was reset: CANCEL` before any body byte, while `curl --http1.1` streams fine. | **Settings → Network → HTTP protocol**: *Auto* (default: HTTP/2 when the server offers it) or *HTTP/1.1 only* (every hardened client: providers, future MCP HTTP / skill import). In *Auto*, an HTTP/2 stream reset makes `FallbackChain` mark that **host** HTTP/1.1-only for the session (`DesktopHttp.downgradeToHttp1`), rebuild the provider and retry **immediately**, without spending the 1 s/2 s/4 s same-model budget and without jumping to a fallback model; a second reset on the same host goes through the normal retry/fallback path. Providers pass their base URL to `DesktopHttp.harden(client, basePath)` (one-line `[desktop]` edit in the three providers). |
+| Can't tell who reset the stream (OkHttp reports a local `call.cancel()` on an HTTP/2 stream with the very same text, `stream was reset: CANCEL`). | `WatchdogListener` logs and appends to the turn error: protocol, ms since call start / since response headers, body bytes, and **reset origin: LOCAL call.cancel() (by whom) / PEER**. Test `localCancelAfterHeadersLooksExactlyLikeTheReport…` proves the local case produces the exact reported message. |
+| Connect/TLS timeout field clamped every keystroke to ≥3 (editing "20" passed through "2" → saved as **3 s**). | No per-keystroke clamp; the watchdog treats values < 3 as the 20 s default, caps at 300, and is additionally disarmed as soon as request headers go out (pooled/coalesced connections). |
+
 ## Third-party additions (desktop)
 
 | Library | Version | License | Use |

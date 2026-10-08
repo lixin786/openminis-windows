@@ -15,6 +15,7 @@
 |---|---|
 | batch1（P0） | 上下文压缩、图片/附件输入、模型回退链、中英文分词记忆检索 |
 | hotfix1 | 修复 UTF-8 解码乱码（中文 Windows 上按 GBK 解流式响应）、窗口尺寸超出屏幕、新增网络代理设置（跟随系统 / 直连 / 手动） |
+| hotfix2 | HTTP/2 流重置：设置 → Network → HTTP protocol（Auto / HTTP/1.1 only）；Auto 下遇 `stream was reset` 按主机自动降级 HTTP/1.1 并立即重试；重置来源诊断（本地 cancel / 对端）；修连接超时输入框被钳到 3 秒；补回 gradle-wrapper.jar |
 
 已在真 Windows 11 x64 + Temurin JDK 17 上验证通过的项目：
 
@@ -25,7 +26,7 @@
 - shell 工具直接在宿主机执行（PowerShell / cmd / WSL），工作区自动创建
 - 回退链按 1s/2s/4s 退避重试；TLS 看门狗正常
 
-## 已知未解决的阻塞（优先修）
+## 已知阻塞（hotfix2 已处理，待真机复测）
 
 OkHttp 走 **HTTP/2** 时，流式响应会在**精确 +3004ms** 报
 `StreamResetException: stream was reset: CANCEL`：响应头能正常拿到（`status=200`、`text/event-stream`），但正文收不到一个字节。

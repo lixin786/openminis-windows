@@ -584,7 +584,7 @@ class OpenAIProvider private constructor(
         .connectionPool(com.openminis.app.network.NetworkMonitor.sharedLLMConnectionPool)
         .eventListenerFactory { OkHttpNetTraceListener() }
         .build()
-        .let(com.openminis.desktop.net.DesktopHttp::harden) // [desktop] proxy settings + connect/TLS watchdog
+        .let { com.openminis.desktop.net.DesktopHttp.harden(it, basePath) } // [desktop] proxy settings + connect/TLS watchdog + HTTP/1.1 fallback
 
     /** Detect OpenRouter base URL. */
     private val isOpenRouter: Boolean = basePath.contains("openrouter.ai")

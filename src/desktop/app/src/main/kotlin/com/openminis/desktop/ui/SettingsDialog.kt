@@ -265,8 +265,18 @@ internal fun settingsDialogSize(): DpSize {
                 singleLine = true, modifier = Modifier.fillMaxWidth().tabMovesFocus())
         }
     }
-    NumberField("Connect + TLS handshake timeout (seconds)", n.connectTimeoutSeconds, Modifier.fillMaxWidth()) { onChange(n.copy(connectTimeoutSeconds = it.coerceIn(3, 300))) }
+    // [hotfix2] no clamp per keystroke: clamping "20" → "2" → 3 while the user edits used to leave a
+    // 3-second watchdog behind. The watchdog clamps (and treats < 3 as the 20 s default) when it arms.
+    NumberField("Connect + TLS handshake timeout (seconds, 3–300)", n.connectTimeoutSeconds, Modifier.fillMaxWidth()) { onChange(n.copy(connectTimeoutSeconds = it)) }
     Hint("A connection that has not finished its TLS handshake within this time is aborted and reported (then retried / handed to a fallback model).")
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text("HTTP protocol:", Modifier.width(140.dp))
+        Dropdown(n.httpProtocol, com.openminis.desktop.net.HttpProtocolMode.entries, { it.label }, { onChange(n.copy(httpProtocol = it)) })
+    }
+    Hint(when (n.httpProtocol) {
+        com.openminis.desktop.net.HttpProtocolMode.AUTO -> "HTTP/2 when the server offers it. If a server resets an HTTP/2 stream (\"stream was reset\"), that host is switched to HTTP/1.1 for the rest of the session and the request is retried immediately."
+        com.openminis.desktop.net.HttpProtocolMode.HTTP1_ONLY -> "Every connection uses HTTP/1.1 (like curl --http1.1). Use this for gateways / relays whose HTTP/2 streaming is broken."
+    })
 }
 
 @Composable private fun NumberField(label: String, value: Int, modifier: Modifier, onChange: (Int) -> Unit) {

@@ -12,6 +12,7 @@ import com.openminis.app.logging.AppLogger
 import com.openminis.app.provider.LLMProvider
 import com.openminis.desktop.core.AppSettings
 import com.openminis.desktop.core.ModelRef
+import com.openminis.desktop.net.DesktopHttp
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 
@@ -72,6 +73,10 @@ class FallbackChain(
     private val retryDelaysMs: List<Long> = FallbackPolicy.DEFAULT_RETRY_DELAYS_MS,
     private val onNotice: (String) -> Unit = {},
     private val onRetry: (attempt: Int, max: Int, reason: String) -> Unit = { _, _, _ -> },
+    /** Base URL of a chain member (host key for the HTTP/2 → HTTP/1.1 downgrade). */
+    private val baseUrlOf: (ModelRef) -> String? = { settings.provider(it.provider).effectiveBaseUrl(it.provider) },
+    /** [DesktopHttp.downgradeToHttp1]; injectable for tests. */
+    private val downgradeToHttp1: (baseUrl: String?, why: String) -> Boolean = DesktopHttp::downgradeToHttp1,
 ) {
     val refs: List<ModelRef> = settings.modelChain()
     var index: Int = 0
@@ -112,6 +117,18 @@ class FallbackChain(
     suspend fun onFailure(error: Throwable): Boolean {
         val actual = FallbackPolicy.unwrap(error)
         if (actual is CancellationException) throw actual
+        // [desktop hotfix2] HTTP/2 RST_STREAM (e.g. `stream was reset: CANCEL` right after a 200
+        // text/event-stream header) is a protocol-level failure: retrying the same HTTP/2 stream just
+        // fails the same way, so rebuild this member's provider HTTP/1.1-only and retry at once,
+        // without spending the same-model retry budget. Once per host per session (Auto mode only).
+        if (DesktopHttp.isHttp2StreamReset(actual) && downgradeToHttp1(baseUrlOf(currentRef), actual.message ?: "stream reset")) {
+            providers.remove(index)
+            val msg = "⚠️ ${currentRef.label}: the server reset the HTTP/2 stream — retrying over HTTP/1.1 " +
+                "(kept for this host until restart; Settings → Network → HTTP protocol to make it permanent)."
+            AppLogger.warning("FallbackChain", msg)
+            onNotice(msg)
+            return true
+        }
         if (FallbackPolicy.isTransient(actual) && retryAttempt < retryDelaysMs.size) {
             val wait = retryDelaysMs[retryAttempt]
             retryAttempt += 1

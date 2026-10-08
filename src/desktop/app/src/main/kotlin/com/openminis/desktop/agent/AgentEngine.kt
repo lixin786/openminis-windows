@@ -328,7 +328,9 @@ class AgentEngine(
             val detail = e.message ?: e.javaClass.simpleName
             val stall = com.openminis.desktop.net.DesktopHttp.lastStall
                 ?.takeIf { it.first >= turnStartedAt }?.second?.let { "\n\n$it" } ?: ""
-            val extra = stall + (chain.unavailableSummary()?.let { "\n\nFallback models skipped:\n$it" } ?: "")
+            val reset = com.openminis.desktop.net.DesktopHttp.lastReset
+                ?.takeIf { it.first >= turnStartedAt }?.second?.let { "\n\n$it" } ?: ""
+            val extra = stall + reset + (chain.unavailableSummary()?.let { "\n\nFallback models skipped:\n$it" } ?: "")
             return snapshot(error = detail + extra).also(listener::onUpdate)
         }
     }

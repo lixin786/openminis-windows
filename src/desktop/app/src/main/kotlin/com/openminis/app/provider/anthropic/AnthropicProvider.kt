@@ -81,7 +81,7 @@ class AnthropicProvider(
         // Network-transition eviction must reach provider connections.
         .connectionPool(com.openminis.app.network.NetworkMonitor.sharedLLMConnectionPool)
         .build()
-        .let(com.openminis.desktop.net.DesktopHttp::harden) // [desktop] proxy settings + connect/TLS watchdog
+        .let { com.openminis.desktop.net.DesktopHttp.harden(it, basePath) } // [desktop] proxy settings + connect/TLS watchdog + HTTP/1.1 fallback
 
     override suspend fun sendMessageClamped(
         messages: List<LLMMessage>,
