@@ -69,9 +69,14 @@ compose.desktop {
             targetFormats(TargetFormat.Msi, TargetFormat.Exe)
             packageName = "OpenMinis"
             packageVersion = "1.14.0"
-            description = "OpenMinis AI agent (desktop)"
-            vendor = "OpenMinis contributors"
-            copyright = "GPL-3.0 — OpenMinis contributors"
+            // ASCII only: Compose writes these into jpackage's @args file, and jpackage on Chinese
+            // (GBK / non-UTF-8) Windows reads that file in the ANSI code page and fails with
+            // "Input length = 1" on any non-ASCII byte — even when Gradle runs with
+            // -Dfile.encoding=UTF-8 (a ~/.gradle/gradle.properties org.gradle.jvmargs or an IDE
+            // build replaces ours). Checked by requireAsciiPackagingMetadata below.
+            description = PACKAGING_DESCRIPTION
+            vendor = PACKAGING_VENDOR
+            copyright = PACKAGING_COPYRIGHT
             licenseFile.set(rootProject.file("LICENSE"))
             // From `gradlew :desktop:suggestRuntimeModules` + TLS (EC ciphers) + Windows accessibility bridge.
             modules("java.instrument", "java.sql", "jdk.unsupported", "jdk.crypto.ec", "jdk.accessibility")
@@ -86,6 +91,25 @@ compose.desktop {
             }
         }
     }
+}
+
+// jpackage metadata (see the nativeDistributions comment). Fails the build early with a clear
+// message instead of jpackage's "Input length = 1" on Chinese Windows.
+val PACKAGING_DESCRIPTION get() = "OpenMinis AI agent (desktop)"
+val PACKAGING_VENDOR get() = "OpenMinis contributors"
+val PACKAGING_COPYRIGHT get() = "GPL-3.0 - OpenMinis contributors"
+val requireAsciiPackagingMetadata by tasks.registering {
+    group = "verification"
+    description = "Fails if the jpackage metadata contains non-ASCII characters."
+    doLast {
+        val bad = mapOf("description" to PACKAGING_DESCRIPTION, "vendor" to PACKAGING_VENDOR, "copyright" to PACKAGING_COPYRIGHT, "packageName" to "OpenMinis")
+            .filterValues { v -> v.any { it.code > 0x7E || it.code < 0x20 } }
+        if (bad.isNotEmpty()) throw GradleException("jpackage metadata must be ASCII (jpackage reads its @args file in the ANSI code page on Chinese Windows): $bad")
+    }
+}
+tasks.configureEach {
+    if (name.startsWith("package") || name.startsWith("createDistributable") || name.startsWith("createReleaseDistributable"))
+        dependsOn(requireAsciiPackagingMetadata)
 }
 
 // Fat jar with Windows x64 natives — runnable on Windows with `java -jar` (Java 17+).

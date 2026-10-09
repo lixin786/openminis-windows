@@ -183,6 +183,13 @@ symlink 不得逃逸（`~/link -> /tmp` 这类）；目标不存在时解析最�
 - 给模型的内容（工具说明、工具结果、scheduled_task 列表的 trigger 描述）保持英文。
 - `I18nTest`：三语 key 一致、占位符一致、中文无漏译、系统语言映射、源码引用的 key 都存在、UI 无残留硬编码英文、旧 settings.json 兼容。
 
+### 中文 Windows 打包（P3-2 修复）
+
+- jpackage 在中文（GBK）Windows 上按 ANSI 代码页读 Compose 生成的 @args 文件，遇到非 ASCII 字节会报 `Input length = 1`。
+- `gradle.properties` 一直带着 `org.gradle.jvmargs=... -Dfile.encoding=UTF-8`，但 `~/.gradle/gradle.properties`、`GRADLE_OPTS` 或 IDE 构建都可能把它覆盖掉。
+- 所以根治：description / vendor / copyright 改为纯 ASCII（copyright 的破折号改成 `-`）；`packageMsi/packageExe/createDistributable` 之前会先跑 `requireAsciiPackagingMetadata`，元数据再出现非 ASCII 会直接报清楚的错。
+- 仍需注意：项目路径本身含中文（如 `C:\Users\张三\...`）也会进 @args 文件，建议放在纯英文路径下打包。
+
 ## 构建
 
 ```bash
