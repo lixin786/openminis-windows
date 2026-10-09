@@ -549,6 +549,17 @@ class AppState(val paths: AppPaths, private val scope: CoroutineScope) {
         startTurn(conv.id)
     }
 
+    /** Edit a user message and run the turn again from there; everything after it is dropped. */
+    fun editAndResend(messageId: String, newText: String): Boolean {
+        val conv = selected ?: return false
+        if (isRunning || scheduledRunning.containsKey(conv.id)) return false
+        val edited = editedConversation(conv, messageId, newText) ?: return false
+        mutate(conv.id, persist = true) { edited.copy(updatedAt = System.currentTimeMillis()) }
+        conversations.indexOfFirst { it.id == conv.id }.takeIf { it > 0 }?.let { conversations.add(0, conversations.removeAt(it)) }
+        startTurn(conv.id)
+        return true
+    }
+
     fun skillCount(): Int = runCatching { skills.load().size }.getOrDefault(0)
 
     fun openInExplorer(f: File) {
@@ -570,6 +581,24 @@ class AppState(val paths: AppPaths, private val scope: CoroutineScope) {
     }
 
     companion object {
+        /**
+         * [c] with user message [messageId] replaced by [newText] (attachments kept, fresh id) and every later message
+         * dropped, plus compaction markers anchored in the dropped part. Null when the id is not a user message or the
+         * edit would leave an empty message.
+         */
+        fun editedConversation(c: Conversation, messageId: String, newText: String): Conversation? {
+            val idx = c.messages.indexOfFirst { it.id == messageId && it.role == ChatRole.USER }
+            if (idx < 0) return null
+            val old = c.messages[idx]
+            val text = newText.trim()
+            if (text.isEmpty() && old.attachments.isEmpty()) return null
+            val kept = c.messages.subList(0, idx).toList() + ChatMessage(role = ChatRole.USER, text = text, attachments = old.attachments)
+            val alive = kept.map { it.id }.toSet()
+            val title = if (idx == 0 && !c.titleLocked) titleFrom(text.ifEmpty { old.attachments.first().fileName }) else c.title
+            return c.copy(messages = kept, title = title,
+                compactMarkers = c.compactMarkers.filter { it.lastCompactedMessageId.substringBefore('#') in alive })
+        }
+
         /** The first message titles a chat, unless the user already renamed it. */
         fun titleOnSend(conv: Conversation, text: String): String =
             if (conv.messages.isEmpty() && !conv.titleLocked) titleFrom(text) else conv.title

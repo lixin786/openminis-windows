@@ -71,6 +71,7 @@ import com.openminis.desktop.core.ChatMessage
 import com.openminis.desktop.core.ChatRole
 import com.openminis.desktop.core.Conversation
 import com.openminis.desktop.core.ConversationSearch
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.isSecondaryPressed
@@ -381,6 +382,14 @@ private fun ChatPane(state: AppState, modifier: Modifier) {
                         }
                     }
                 }
+                val canScrollDown by remember(listState) { derivedStateOf { listState.canScrollForward } }
+                if (canScrollDown) {
+                    val scope = rememberCoroutineScope()
+                    SmallFloatingActionButton(
+                        onClick = { scope.launch { if (total > 0) listState.animateScrollToItem(total - 1, Int.MAX_VALUE / 2) } },
+                        modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp),
+                    ) { Icon(Icons.Default.KeyboardArrowDown, tr("chat.scroll_bottom")) }
+                }
             }
         }
         if (state.runningConversationId == conv?.id) SubAgentBlock(state)
@@ -543,12 +552,24 @@ private fun MessageItem(state: AppState, m: ChatMessage, isLast: Boolean, live: 
                     }
                 }
             }
-            if (m.text.isNotBlank()) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                Surface(
-                    shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
-                    modifier = Modifier.widthIn(max = 720.dp),
-                ) {
-                    SelectionContainer { Text(m.text, Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) }
+            var editing by remember(m.id) { mutableStateOf(false) }
+            if (editing) EditUserMessage(state, m) { editing = false }
+            else {
+                if (m.text.isNotBlank()) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    Surface(
+                        shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
+                        modifier = Modifier.widthIn(max = 720.dp),
+                    ) {
+                        SelectionContainer { Text(m.text, Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) }
+                    }
+                }
+                if (!live) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    if (m.text.isNotBlank()) IconButton(onClick = { clipboard.setText(AnnotatedString(m.text)) }, modifier = Modifier.size(28.dp)) {
+                        Icon(Icons.Default.ContentCopy, tr("common.copy"), Modifier.size(15.dp))
+                    }
+                    IconButton(onClick = { editing = true }, modifier = Modifier.size(28.dp), enabled = !state.isRunning) {
+                        Icon(Icons.Default.Edit, tr("msg.edit"), Modifier.size(15.dp))
+                    }
                 }
             }
         } else {
@@ -588,6 +609,32 @@ private fun MessageItem(state: AppState, m: ChatMessage, isLast: Boolean, live: 
     }
 }
 
+/** Inline editor for a sent user message: Ctrl+Enter resends from here, Esc cancels. */
+@Composable
+private fun EditUserMessage(state: AppState, m: ChatMessage, onDone: () -> Unit) {
+    var value by remember(m.id) { mutableStateOf(TextFieldValue(m.text, TextRange(m.text.length))) }
+    val focus = remember { FocusRequester() }
+    LaunchedEffect(m.id) { runCatching { focus.requestFocus() } }
+    val dropped = state.selected?.messages?.let { list -> list.size - 1 - list.indexOfFirst { it.id == m.id } } ?: 0
+    fun save() { if (state.editAndResend(m.id, value.text)) onDone() }
+    Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.End) {
+        OutlinedTextField(
+            value = value, onValueChange = { value = it }, textStyle = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.widthIn(min = 320.dp, max = 720.dp).focusRequester(focus).onPreviewKeyEvent { ev ->
+                if (ev.type != KeyEventType.KeyDown) false
+                else if ((ev.key == Key.Enter || ev.key == Key.NumPadEnter) && ev.isCtrlPressed) { save(); true }
+                else if (ev.key == Key.Escape) { onDone(); true } else false
+            }.semantics { contentDescription = tr("msg.edit") },
+        )
+        if (dropped > 0) Text(tr("msg.edit.drops", dropped), style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 2.dp))
+        Row(Modifier.padding(top = 4.dp)) {
+            TextButton(onClick = onDone) { Text(tr("common.cancel_esc")) }
+            Button(onClick = { save() }, enabled = !state.isRunning && (value.text.isNotBlank() || m.attachments.isNotEmpty())) { Text(tr("msg.edit.resend")) }
+        }
+    }
+}
+
 @Composable
 private fun RoundView(r: Round) {
     if (r.thinking.isNotBlank()) {
@@ -614,46 +661,99 @@ private fun RoundView(r: Round) {
             )
         }
     }
-    r.toolCalls.forEach { ToolCallCard(it) }
+    if (ToolPresentation.shouldGroup(r.toolCalls)) ToolGroup(r.toolCalls) else r.toolCalls.forEach { ToolCallCard(it) }
+}
+
+/** A finished batch of calls folded under one header; failures stay listed under it even when folded. */
+@Composable
+private fun ToolGroup(calls: List<ToolCall>) {
+    var open by remember { mutableStateOf(false) }
+    val failed = calls.filter(ToolPresentation::isFailure)
+    Row(
+        Modifier.fillMaxWidth().padding(vertical = 3.dp).clip(RoundedCornerShape(8.dp)).clickable { open = !open }
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(Icons.Default.Build, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.width(8.dp))
+        Text(if (failed.isEmpty()) tr("tool.group", calls.size) else tr("tool.group_failed", calls.size, failed.size),
+            style = MaterialTheme.typography.labelLarge, color = if (failed.isEmpty()) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error,
+            modifier = Modifier.weight(1f))
+        Text(calls.map { ToolPresentation.displayName(it.name) }.distinct().joinToString(", "), style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+        Icon(if (open) Icons.Default.ExpandLess else Icons.Default.ExpandMore, tr(if (open) "tool.collapse" else "tool.expand"), Modifier.size(18.dp))
+    }
+    Column(Modifier.padding(start = 12.dp)) {
+        (if (open) calls else failed).forEach { ToolCallCard(it) }
+    }
+}
+
+private fun kindIcon(k: ToolPresentation.Kind) = when (k) {
+    ToolPresentation.Kind.SHELL -> Icons.Default.Terminal
+    ToolPresentation.Kind.FILE -> Icons.Default.Description
+    ToolPresentation.Kind.MEMORY -> Icons.Default.Psychology
+    ToolPresentation.Kind.MCP -> Icons.Default.Extension
+    ToolPresentation.Kind.SUBAGENT -> Icons.Default.Groups
+    ToolPresentation.Kind.SCHEDULED -> Icons.Default.Schedule
+    ToolPresentation.Kind.OTHER -> Icons.Default.Build
 }
 
 @Composable
 private fun ToolCallCard(tc: ToolCall) {
-    var open by remember { mutableStateOf(false) }
-    val (icon, tint) = when (tc.status) {
-        ToolStatus.DONE -> Icons.Default.CheckCircle to MaterialTheme.colorScheme.primary
-        ToolStatus.FAILED -> Icons.Default.Error to MaterialTheme.colorScheme.error
-        ToolStatus.DENIED -> Icons.Default.Block to MaterialTheme.colorScheme.error
-        else -> Icons.Default.Build to MaterialTheme.colorScheme.onSurfaceVariant
+    val failure = ToolPresentation.isFailure(tc)
+    // Failed calls open by themselves the first time they are shown.
+    var open by remember(tc.id) { mutableStateOf(failure) }
+    val clipboard = LocalClipboardManager.current
+    val running = tc.status == ToolStatus.RUNNING || tc.status == ToolStatus.PENDING
+    val tint = when {
+        failure -> MaterialTheme.colorScheme.error
+        tc.status == ToolStatus.DONE -> MaterialTheme.colorScheme.primary
+        else -> MaterialTheme.colorScheme.onSurfaceVariant
     }
     val summary = remember(tc.argsJson) { toolSummary(tc) }
+    val errorLine = ToolPresentation.errorLine(tc)
     Surface(
-        shape = RoundedCornerShape(8.dp), color = MaterialTheme.colorScheme.surfaceVariant,
+        shape = RoundedCornerShape(8.dp),
+        color = if (failure) MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.35f) else MaterialTheme.colorScheme.surfaceVariant,
         modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
     ) {
         Column(Modifier.clickable { open = !open }.padding(horizontal = 10.dp, vertical = 7.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                if (tc.status == ToolStatus.RUNNING || tc.status == ToolStatus.PENDING)
-                    CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
-                else Icon(icon, tc.status.name.lowercase(), tint = tint, modifier = Modifier.size(16.dp))
+                if (running) CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
+                else Icon(kindIcon(ToolPresentation.kind(tc.name)), tr("tool.status.${tc.status.name}"), tint = tint, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(8.dp))
-                Text(tc.name, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelLarge)
+                Text(ToolPresentation.displayName(tc.name), fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelLarge)
                 Spacer(Modifier.width(8.dp))
-                Text(summary, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace,
+                Text(errorLine ?: summary, style = MaterialTheme.typography.bodySmall, fontFamily = if (errorLine == null) FontFamily.Monospace else null,
+                    color = if (errorLine != null) MaterialTheme.colorScheme.error else androidx.compose.ui.graphics.Color.Unspecified,
                     maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                tc.durationMs?.let { Text("${it}ms", style = MaterialTheme.typography.labelSmall) }
-                Icon(if (open) Icons.Default.ExpandLess else Icons.Default.ExpandMore, null, Modifier.size(18.dp))
+                Text(
+                    listOfNotNull(tr("tool.status.${tc.status.name}").takeIf { running || failure }, tc.durationMs?.let(ToolPresentation::duration)).joinToString(" · "),
+                    style = MaterialTheme.typography.labelSmall, color = tint, modifier = Modifier.padding(horizontal = 4.dp),
+                )
+                Icon(if (open) Icons.Default.ExpandLess else Icons.Default.ExpandMore, tr(if (open) "tool.collapse" else "tool.expand"), Modifier.size(18.dp))
             }
             if (open) {
                 Spacer(Modifier.height(6.dp))
-                Text(tr("tool.arguments"), style = MaterialTheme.typography.labelSmall)
+                SectionLabel(tr("tool.arguments")) { clipboard.setText(AnnotatedString(prettyJson(tc.argsJson))) }
                 MonoBlock(prettyJson(tc.argsJson))
-                tc.result?.let {
-                    Text(tr("tool.result"), style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 4.dp))
-                    MonoBlock(it.take(20_000))
+                tc.result?.let { full ->
+                    val c = remember(full) { ToolPresentation.clip(full) }
+                    SectionLabel(tr("tool.result")) { clipboard.setText(AnnotatedString(full)) }
+                    MonoBlock(c.text)
+                    if (c.truncated) Text(tr("tool.truncated", c.text.length, c.total), style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 2.dp))
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun SectionLabel(label: String, onCopy: () -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp)) {
+        Text(label, style = MaterialTheme.typography.labelSmall, modifier = Modifier.weight(1f))
+        IconButton(onClick = onCopy, modifier = Modifier.size(24.dp)) { Icon(Icons.Default.ContentCopy, tr("tool.copy", label), Modifier.size(14.dp)) }
     }
 }
 
