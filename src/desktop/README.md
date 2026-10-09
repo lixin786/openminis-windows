@@ -12,7 +12,7 @@ OpenMinis 是一个开源 AI Agent 应用（[GitHub](https://github.com/OpenMini
 - API Key、Base URL、模型 ID 设置（`Ctrl+,` 打开设置）
 - 会话列表 + 本地持久化（`%APPDATA%\OpenMinis\conversations\*.json`），支持搜索、删除、重新生成
 - Agent 工具调用：`shell`（PowerShell / cmd / WSL）、`file_read`、`file_write`、`file_edit`、`list_dir`、`memory_write`、`memory_get`
-- **运行前确认**：默认每条 shell 命令、以及工作区外的文件写入都会弹窗确认（可在设置中关闭）
+- **运行前确认**：默认每条 shell 命令弹窗确认；危险命令（`rm -rf /`、`format C:`、`Remove-Item -Recurse C:\` 等，含 `sh -c` / `powershell -EncodedCommand` 嵌套）直接拒绝；含 `> | ; & $(` 等元字符或调用解释器的命令始终确认；只读命令（ls / dir / Get-ChildItem …）可免确认；文件工具只能访问工作区（越界硬拒绝）
 - Skills：读取 `SKILL.md` 文件夹（`%APPDATA%\OpenMinis\skills\<名称>\SKILL.md` 或 `<工作区>\.skills\`）
 - 记忆：`GLOBAL.md`（用户维护）+ 每日日志 `YYYY-MM-DD.md`（Agent 写入），与 Android 版布局一致；`memory_get` 为中英文分词（jieba）+ BM25 排序 + 近期加权的检索
 - **上下文压缩**（批次 1）：接近模型上下文窗口时自动压缩，或点工具栏压缩按钮 / `Ctrl+Shift+K` / 输入 `/compact`；可查看摘要、撤销

@@ -19,6 +19,7 @@
 | batch3 | P1：技能导入界面（GitHub 链接/zip/文件夹/粘贴，开关/删除）；计划任务（定时/延时/间隔/接力，新对话或续写，运行记录，agent 工具 scheduled_task；**只在应用运行时触发，应用不运行时不会执行**）；MCP 拒绝启动后对话内提示 |
 | batch2 | P1：MCP stdio 客户端（mcp_servers.json，Claude Desktop 配置可直接导入，启动前确认，工具以 mcp__服务器__工具 暴露）；子智能体（subagent_task，与上游同 schema，并发/深度上限，子任务命令仍需确认）；修复等待响应头时 Stop 卡住 |
 | batch3 补充 | 计划任务窗口与新建/编辑表单顶部常驻提示：**应用不运行时不会执行**（到点时应用未打开，这一次就跳过；延时/间隔任务在下次启动时补跑一次）。设置窗口、计划任务窗口按当前屏幕可用区域（减去边距）限制初始尺寸并居中，可调整大小，内容可滚动且有滚动条——1366×768 @125–150% 的小屏也能滚到「Skills → 导入」按钮 |
+| batch4 安全加固 | 见下方「安全加固」完成情况：denylist 硬拦截（POSIX + Windows，嵌套 sh -c / eval / $( ) / cmd /c / powershell -Command / -EncodedCommand 递归扫描，`${IFS}` 展开，变量目标 fail-closed）、元字符守卫、只读白名单免确认（设置项，默认开）、路径硬约束（realpath / symlink / junction / UNC / ADS / 8.3）、fail-closed、攻击回归测试 41 条、Shell 侧无任何持久放行、PROVENANCE.md；全量 520 个测试通过 |
 | hotfix3 | 经代理在响应头之后被掐断流时提示「本地代理可能掐断流式连接，建议直连 / 加入绕过列表」；失败诊断（来源 LOCAL/PEER、协议、路由、耗时）写入可复制的错误文本 |
 
 已在真 Windows 11 x64 + Temurin JDK 17 上验证通过的项目：
@@ -153,6 +154,23 @@ symlink 不得逃逸（`~/link -> /tmp` 这类）；目标不存在时解析最�
 
 安全回归测试全绿；并在真 Windows 上跑三条真实用例确认行为：① 越界写文件被拒；
 ② 注入式只读命令（`echo x >> ~/.ssh/authorized_keys`）被要求确认而不是直接放行；③ 危险命令（`rm -rf /` 变体）被硬拦截。
+
+### 完成情况（batch4，2026-10-09）
+
+代码在 `src/desktop/app/src/main/kotlin/com/openminis/desktop/security/`（`CommandGuard.kt`、`PathGuard.kt`、`Approvals.kt`），细节与偏差见 `src/desktop/PORTING.md`「Security hardening」。
+
+| 层 | 状态 | 要点 |
+|---|---|---|
+| 1 denylist | ✅ | 命中即拒绝，不弹确认框，工具结果写明原因。覆盖上面所列 POSIX 规则，并补齐 Windows：`rd/rmdir /s`、`del /s`、`format C:`、`Remove-Item -Recurse`（及别名 rm/ri/del/rd/rmdir）指向盘符根 / `%USERPROFILE%` / `$env:USERPROFILE` / `~` / `C:\Windows`、`diskpart`、`cipher /w`、`bcdedit`、`Stop-Computer`/`Restart-Computer`、`shutdown /s /r`、`vssadmin delete shadows`、`wmic shadowcopy delete`、`reg delete HKLM`、`Format-Volume`/`Clear-Disk`。嵌套载荷递归扫描：`sh/bash -c`、`eval`、`$( )`、反引号、`cmd /c`、`powershell -Command`、`-EncodedCommand`（base64 UTF-16LE 解码后再扫，解不开直接拒绝）、`sudo/env/timeout/xargs/wsl` 前缀。MCP 启动命令也过同一 denylist |
+| 2 元字符守卫 | ✅ | 含 `> < \| ; & \` $ ( )` 或换行：免确认路径全部失效，即使关闭「每条命令都确认」也照样弹框；调用解释器、含嵌套载荷的命令同样处理 |
+| 3 白名单 | ✅ | 设置 › Tools & shell › Run read-only commands without asking（默认开）；ls/cat/grep/head/tail/wc/date/which/dir/type/where/findstr/Get-ChildItem/Get-Content/Select-String/echo 等，且无元字符、参数不越出工作区、不含 `-exec/-delete/-o/-i` 等写入参数；find/sed/awk/xargs/env/git 不在白名单 |
+| 4 路径硬约束 | ✅ | file_read / list_dir：工作区 + 只读的 skills、attachments 目录；file_write / file_edit / shell cwd：仅工作区。越界一律硬拒绝（原「工作区外写入确认」设置已删除）。realpath、symlink/junction、目标不存在取最近祖先、`\\?\`、UNC、8.3 短名、`C:foo`、ADS `a.txt:s`、保留设备名均处理 |
+| 5 fail-closed | ✅ | 无窗口 / 审批异常 / 弹框出错 / 10 分钟无应答 → 拒绝；子智能体、计划任务、MCP 同一路径 |
+| 6 攻击回归测试 | ✅ | `security/AttackRegressionTest`（19）+ `CommandGuardTest`（8）+ `PathGuardTest`（14），含真实 symlink 逃逸、`echo >> authorized_keys` 需确认、审批异常即拒绝、误报用例（`rm -rf ./build` 只需确认、`ls -la` 免确认） |
+| 7 解释器永不记住 | ✅ | Shell 侧**不再有任何持久放行**：原来 shell 弹框的 Always allow（会永久关闭确认）已删除，改为「Allow for this session」仅在内存里记住完全相同的命令，且解释器 / 元字符 / 嵌套 / 被拦截的命令不提供该选项。升级后首次启动会把 `confirmShellCommands` 重新打开一次（旧版 Always allow 留下的关闭状态无法与手动关闭区分）。MCP 的 SHA-256 指纹永久允许保持不变 |
+| 8 PROVENANCE.md | ✅ | `src/desktop/PROVENANCE.md`，上游锁定 commit `b4c0661d5631ebab4d1a2e6f3fd4c805d4030a6c`（v1.14） |
+
+真机三条验收用例仍待在 Windows 上手动确认。
 
 
 
