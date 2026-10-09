@@ -58,19 +58,21 @@ private val DAYS = listOf(Calendar.MONDAY to "Mon", Calendar.TUESDAY to "Tue", C
 @Composable
 fun ScheduledTasksWindow(state: AppState, onClose: () -> Unit) {
     var editing by remember { mutableStateOf<ScheduledTask?>(null) }
-    DialogWindow(onCloseRequest = onClose, title = "Scheduled tasks", state = rememberDialogState(size = DpSize(820.dp, 680.dp)),
+    DialogWindow(onCloseRequest = onClose, title = "Scheduled tasks", state = rememberFittedDialogState(820.dp, 680.dp), resizable = true,
         onPreviewKeyEvent = { ev -> if (ev.type == KeyEventType.KeyDown && ev.key == Key.Escape) { if (editing != null) editing = null else onClose(); true } else false }) {
         MinisTheme(state.settings.darkTheme) {
             Surface(Modifier.fillMaxSize()) {
                 @Suppress("UNUSED_VARIABLE") val tick = state.scheduledTick
                 val tasks = state.scheduler.list()
-                Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp)) {
+                ScrollColumn(Modifier.fillMaxSize()) {
+                    RunsOnlyWhileOpenNote()
+                    Spacer(Modifier.height(8.dp))
                     val e = editing
                     if (e != null) {
                         TaskEditor(state, e, tasks, onSave = { state.scheduler.save(it); editing = null }, onCancel = { editing = null })
                     } else {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("Tasks run a prompt on a schedule while OpenMinis is running. Shell commands they run still ask for approval when confirmation is on.",
+                            Text("Tasks run a prompt on a schedule. Shell commands they run still ask for approval when confirmation is on.",
                                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
                             Button(onClick = { editing = ScheduledTask(label = "", timeOfDayHour = 9, timeOfDayMinute = 0, repeatMode = ScheduledRepeatMode.DAILY, prompt = "") }) { Text("New task") }
                         }
@@ -240,5 +242,18 @@ object ScheduledEditorRules {
                 t.copy(label = label, triggerKind = ScheduledTriggerKind.ON_COMPLETION, delaySec = null, intervalSec = null, maxFires = null) }
             else -> throw IllegalArgumentException("Unknown trigger $trigger")
         }
+    }
+}
+
+/** [batch3 follow-up] Shown at the top of the task list and of the create / edit form. */
+const val RUNS_ONLY_WHILE_OPEN_NOTE =
+    "Tasks run only while OpenMinis is open. If the app is closed at the scheduled time, that run is skipped " +
+        "(delayed / interval tasks catch up once on next launch)."
+
+@Composable
+private fun RunsOnlyWhileOpenNote() {
+    Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = MaterialTheme.shapes.small, modifier = Modifier.fillMaxWidth()) {
+        Text("ⓘ " + RUNS_ONLY_WHILE_OPEN_NOTE, style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSecondaryContainer, modifier = Modifier.padding(10.dp))
     }
 }

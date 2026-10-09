@@ -60,4 +60,34 @@ object WindowPlacements {
         val h = minOf(DEFAULT_H, (primary.height * 0.92).toInt()).coerceAtLeast(minOf(MIN_H, primary.height))
         return WindowPlacement(primary.x + (primary.width - w) / 2, primary.y + (primary.height - h) / 2, w, h)
     }
+
+    /** Margin kept free around a dialog inside the usable screen area (logical px). */
+    const val DIALOG_MARGIN = 24
+
+    /**
+     * [batch3 follow-up] Initial placement of a secondary window (Settings, Scheduled tasks):
+     * the preferred size shrunk to the usable area of [screen] minus [margin] on every side, never
+     * below [minW]×[minH] unless the screen itself is smaller, centered on that screen. A
+     * 1366×768 laptop at 150 % is ~910×472 logical px after the taskbar, so an 820 px tall window
+     * must come out ≤ 424 px tall — the content then scrolls. Pure function (unit-tested).
+     */
+    fun dialogPlacement(prefW: Int, prefH: Int, screen: Rectangle?, margin: Int = DIALOG_MARGIN, minW: Int = 420, minH: Int = 300): WindowPlacement {
+        if (screen == null || screen.width <= 0 || screen.height <= 0) return WindowPlacement(-1, -1, prefW, prefH)
+        val m = margin.coerceAtLeast(0)
+        val availW = (screen.width - 2 * m).coerceAtLeast(1)
+        val availH = (screen.height - 2 * m).coerceAtLeast(1)
+        val w = prefW.coerceAtMost(availW).coerceAtLeast(minOf(minW, availW))
+        val h = prefH.coerceAtMost(availH).coerceAtLeast(minOf(minH, availH))
+        return WindowPlacement(screen.x + (screen.width - w) / 2, screen.y + (screen.height - h) / 2, w, h)
+    }
+
+    /** Usable area of the monitor the active window is on (else the primary one), logical px. */
+    fun activeScreen(): Rectangle? = runCatching {
+        if (GraphicsEnvironment.isHeadless()) return null
+        val gc = java.awt.KeyboardFocusManager.getCurrentKeyboardFocusManager().activeWindow?.graphicsConfiguration
+            ?: return screens().firstOrNull()
+        val b = Rectangle(gc.bounds)
+        val ins = java.awt.Toolkit.getDefaultToolkit().getScreenInsets(gc)
+        Rectangle(b.x + ins.left, b.y + ins.top, b.width - ins.left - ins.right, b.height - ins.top - ins.bottom)
+    }.getOrNull() ?: screens().firstOrNull()
 }

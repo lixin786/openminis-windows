@@ -154,7 +154,7 @@ fun App(state: AppState) {
             state.toast?.let { msg ->
                 AlertDialog(onDismissRequest = { state.toast = null }, confirmButton = {
                     TextButton(onClick = { state.toast = null }) { Text("OK") }
-                }, text = { Text(msg) })
+                }, text = { Box(Modifier.heightIn(max = 320.dp).verticalScroll(rememberScrollState())) { SelectionContainer { Text(msg) } } })
             }
         }
     }
@@ -562,7 +562,7 @@ private fun ToolCallCard(tc: ToolCall) {
 private fun MonoBlock(text: String) {
     Surface(color = MaterialTheme.colorScheme.background, shape = RoundedCornerShape(6.dp), modifier = Modifier.fillMaxWidth().padding(top = 2.dp)) {
         SelectionContainer {
-            Box(Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState()).horizontalScroll(rememberScrollState())) {
+            Box(Modifier.heightIn(max = 260.dp).verticalScroll(rememberScrollState()).horizontalScroll(rememberScrollState())) {
                 Text(text, fontFamily = FontFamily.Monospace, fontSize = 12.sp, modifier = Modifier.padding(8.dp))
             }
         }

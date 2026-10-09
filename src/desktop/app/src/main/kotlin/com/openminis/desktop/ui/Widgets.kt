@@ -28,6 +28,20 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.isCtrlPressed
 import androidx.compose.ui.input.key.isShiftPressed
+import androidx.compose.foundation.ScrollState
+import androidx.compose.foundation.VerticalScrollbar
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.rememberScrollbarAdapter
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.DpSize
+import androidx.compose.ui.window.DialogState
+import androidx.compose.ui.window.WindowPosition
+import androidx.compose.ui.window.rememberDialogState
 
 @Composable
 fun <T> Dropdown(
@@ -70,5 +84,36 @@ fun Modifier.tabMovesFocus(): Modifier = composed {
         if (ev.type == androidx.compose.ui.input.key.KeyEventType.KeyDown && ev.key == androidx.compose.ui.input.key.Key.Tab && !ev.isCtrlPressed) {
             fm.moveFocus(if (ev.isShiftPressed) androidx.compose.ui.focus.FocusDirection.Previous else androidx.compose.ui.focus.FocusDirection.Next); true
         } else false
+    }
+}
+
+/**
+ * [batch3 follow-up] Dialog window state whose initial size fits the usable area of the current
+ * monitor (minus a margin) and is centered there; the window stays resizable.
+ */
+@Composable
+fun rememberFittedDialogState(prefW: Dp, prefH: Dp): DialogState {
+    val p = remember {
+        com.openminis.desktop.core.WindowPlacements.dialogPlacement(
+            prefW.value.toInt(), prefH.value.toInt(), com.openminis.desktop.core.WindowPlacements.activeScreen(),
+        )
+    }
+    return rememberDialogState(
+        position = if (p.x == -1 && p.y == -1) WindowPosition.PlatformDefault else WindowPosition(p.x.dp, p.y.dp),
+        size = DpSize(p.width.dp, p.height.dp),
+    )
+}
+
+/** A vertically scrolling column with a visible scrollbar on the right (mouse wheel, drag, keyboard). */
+@Composable
+fun ScrollColumn(
+    modifier: Modifier = Modifier,
+    contentPadding: Dp = 20.dp,
+    state: ScrollState = rememberScrollState(),
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Box(modifier) {
+        Column(Modifier.verticalScroll(state).padding(start = contentPadding, top = contentPadding, bottom = contentPadding, end = contentPadding + 8.dp), content = content)
+        VerticalScrollbar(rememberScrollbarAdapter(state), Modifier.align(Alignment.CenterEnd).fillMaxHeight().padding(vertical = 2.dp))
     }
 }

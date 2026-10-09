@@ -166,10 +166,15 @@ Real-Windows finding after hotfix2: two independent ~3 s killers — the local p
 
 - Model: upstream `ScheduledTask` / `PrefilledToolCall` copied verbatim (`com.openminis.app.scheduled`), stored as the same JSON rows in `%APPDATA%\OpenMinis\scheduled_tasks.json`.
 - Triggers: time of day once / daily / weekdays / chosen days with a from / until date, after a delay, every N minutes (optionally N times), when another task finishes (`{{result}}` = its answer). Targets: a new chat each time, or a follow-up in an existing chat. Per-task model (`PROVIDER/model`) and reasoning override. Run records (newest first, 50 kept) with "Open chat".
-- **Deviation from the plan:** an in-process timer (1 s tick, `DesktopScheduler`) instead of Windows Task Scheduler — tasks fire only while OpenMinis is running. Catch-up = upstream's: an overdue after / interval fires once at start; a time-of-day slot missed while the app was closed is skipped. "Run now" does not count toward `--count`. A fire while the same task is still running is skipped.
+- **Deviation from the plan:** an in-process timer (1 s tick, `DesktopScheduler`) instead of Windows Task Scheduler — tasks fire only while OpenMinis is running. **Tasks do not run while the app is not running** (应用不运行时不会执行); the Scheduled tasks window and the create / edit form show this as a permanent note (batch3 follow-up). Catch-up = upstream's: an overdue after / interval fires once at start; a time-of-day slot missed while the app was closed is skipped. "Run now" does not count toward `--count`. A fire while the same task is still running is skipped.
 - A run writes into its chat like a normal turn (live reply visible when that chat is open, "Stop" in the chat); the user's own send in that chat waits. Its shell / file / MCP approvals use the normal dialog, labelled `Scheduled task «label»: …`.
 - Agent tool `scheduled_task` = upstream `minis-scheduled` (list / create / delete / enable / disable / run, same option names). Desktop safety addition: every *create* asks the user. Not offered to sub agents or inside scheduled runs.
 - Not yet: `rerun` / `child-of-current` targets, prefilled tool calls (`--command` / `--tool`; the field round-trips), completion notifications, firing while the app is closed.
+
+## batch3 follow-up (small screens)
+
+- Settings and Scheduled tasks windows: initial size = preferred size clamped to the usable area of the monitor the active window is on, minus a 24 px margin, centered (`WindowPlacements.dialogPlacement`, pure, `DialogPlacementTest`); resizable; content in a scrolling column with a visible scrollbar (`ScrollColumn`), so every section — including Skills › Import — is reachable on 1366×768 at 125–150 %.
+- MCP, Sub agents and Skills (list, detail, import) are sections of the Settings window, so they scroll with it. In-window dialogs: the error / info toast scrolls (max 320 dp), the approval dialog's command block is capped at 260 dp and scrolls.
 
 ## P1-1 MCP (batch2)
 

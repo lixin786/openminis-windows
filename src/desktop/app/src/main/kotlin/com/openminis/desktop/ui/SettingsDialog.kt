@@ -44,7 +44,7 @@ fun SettingsDialog(state: AppState, onClose: () -> Unit) {
     val save = { state.updateSettings(draft); state.updateSubAgentConfig(subDraft); if (mcpDraft != state.mcp.servers) state.updateMcpServers(mcpDraft); onClose() }
     DialogWindow(
         onCloseRequest = onClose, title = "OpenMinis Settings",
-        state = rememberDialogState(size = settingsDialogSize()),
+        state = rememberFittedDialogState(720.dp, 820.dp), resizable = true,
         // Esc closes without saving; Ctrl+S / Ctrl+Enter saves.
         onPreviewKeyEvent = { ev ->
             if (ev.type != androidx.compose.ui.input.key.KeyEventType.KeyDown) false
@@ -58,7 +58,7 @@ fun SettingsDialog(state: AppState, onClose: () -> Unit) {
         MinisTheme(state.settings.darkTheme) {
             Surface(Modifier.fillMaxSize()) {
                 Column(Modifier.fillMaxSize()) {
-                    Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(20.dp)) {
+                    ScrollColumn(Modifier.weight(1f).fillMaxWidth()) {
                         Section("Model provider")
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text("Active provider:", Modifier.width(140.dp))
@@ -233,14 +233,6 @@ fun SettingsDialog(state: AppState, onClose: () -> Unit) {
         Switch(checked = checked, onCheckedChange = onChange,
             modifier = Modifier.semantics { contentDescription = label })
     }
-}
-
-/** Settings window size clamped to the usable screen (HiDPI laptops). */
-internal fun settingsDialogSize(): DpSize {
-    val s = com.openminis.desktop.core.WindowPlacements.screens().firstOrNull()
-    val w = if (s != null) minOf(720, (s.width * 0.9).toInt()) else 720
-    val h = if (s != null) minOf(820, (s.height * 0.9).toInt()) else 820
-    return DpSize(w.dp, h.dp)
 }
 
 @Composable private fun NetworkSection(n: com.openminis.desktop.net.NetworkSettings, onChange: (com.openminis.desktop.net.NetworkSettings) -> Unit) {
