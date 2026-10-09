@@ -1,5 +1,5 @@
 // OpenMinis Desktop — Settings › MCP servers (P1-1): list, add / edit / remove, enable, Connect (= start
-// now, trust this exact launch, show tool count or error), import a Claude-Desktop style `mcpServers` JSON.
+// now, trust this exact launch — one start only for interpreter launches, show tool count or error), import a Claude-Desktop style `mcpServers` JSON.
 // Copyright (C) OpenMinis contributors. Licensed under the GNU GPL v3 (see LICENSE).
 package com.openminis.desktop.ui
 
@@ -17,7 +17,7 @@ import com.openminis.desktop.mcp.McpServerConfig
 @Composable
 internal fun McpSection(state: AppState, servers: List<McpServerConfig>, onChange: (List<McpServerConfig>) -> Unit) {
     @Suppress("UNUSED_VARIABLE") val tick = state.mcpTick // recompose on status changes
-    Hint("Each server is a program started on this computer (stdio transport) the first time a chat needs it — you are asked before every new or changed command line. Its tools appear to the agent as mcp__<server>__<tool>. HTTP servers are not supported yet.")
+    Hint("Each server is a program started on this computer (stdio transport) the first time a chat needs it — you are asked before every new or changed command line. Servers started through an interpreter or package runner (python, node, npx, uvx, cmd, pwsh, scripts, .bat/.cmd shims …) are asked on EVERY start and never remembered; only a direct .exe can be trusted permanently. Its tools appear to the agent as mcp__<server>__<tool>. HTTP servers are not supported yet.")
     servers.forEachIndexed { i, sv ->
         McpServerRow(state, sv,
             onChange = { n -> onChange(servers.mapIndexed { j, o -> if (j == i) n else o }) },
@@ -67,6 +67,7 @@ private fun McpServerRow(state: AppState, sv: McpServerConfig, onChange: (McpSer
             }
             st.error?.let { Text(it.take(600), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
             if (!sv.isStdio && sv.url.isNotBlank()) Hint("HTTP transport (${sv.url}) — kept, but not supported on desktop yet.")
+            if (sv.isStdio) state.mcp.trustVerdict(sv).takeIf { !it.persistable }?.let { Hint("Asked on every start (not remembered): ${it.reason}.") }
             Text(sv.transportSummary.take(200), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             if (open) {
                 OutlinedTextField(sv.name, { onChange(sv.copy(name = it.trim())) }, label = { Text("Name") }, singleLine = true, modifier = Modifier.fillMaxWidth().tabMovesFocus())

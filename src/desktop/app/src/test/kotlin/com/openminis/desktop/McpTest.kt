@@ -112,20 +112,58 @@ class McpTest {
         assertEquals(listOf("fake"), second.denied, "still reported as skipped on later turns")
         assertTrue(second.problems.isEmpty())
 
+        // [security] The fake server is started by `java` = an interpreter: asked on EVERY start, never remembered.
         val dir2 = TestSupport.tmp("om-mcp2")
         approvals.clear()
         val ok = manager(listOf(fake()), approvals, storeDir = dir2)
+        assertFalse(ok.mayPersistTrust(fake()))
         ok.prepare(); ok.stop("fake"); ok.prepare()
-        assertEquals(1, approvals.size, "Allow = for this app session")
-        ok.setServers(listOf(fake().copy(args = fake().args + "--changed")))
-        ok.prepare()
-        assertEquals(2, approvals.size, "a changed command line asks again")
-        approvals.last().onAlwaysAllow!!.invoke()
+        assertEquals(2, approvals.size, "interpreter launch: every start asks, no session trust")
+        assertTrue(approvals.all { it.onAlwaysAllow == null && it.rememberLabel == null }, "no Always allow offered")
+        assertTrue(approvals[0].summary.contains("asked on every start"), approvals[0].summary)
+        ok.trustPermanently(fake())
+        assertFalse(File(dir2, "mcp_trust.json").exists() && File(dir2, "mcp_trust.json").readText().contains("fake"), "nothing written to disk")
         ok.shutdown()
-        val again = manager(emptyList(), approvals, storeDir = dir2)
-        again.prepare()
-        assertEquals(2, approvals.size, "Always allow persisted across restarts (same store)")
-        assertTrue(again.tools("fake").isNotEmpty())
+    }
+
+    @Test fun directExecutableKeepsFingerprintTrust() = runBlocking {
+        // Never actually started (the binary does not exist): only the approval / trust bookkeeping is checked.
+        val d = TestSupport.tmp("om-mcp-direct")
+        val approvals = Collections.synchronizedList(mutableListOf<ApprovalRequest>())
+        val direct = McpServerConfig(name = "gh", command = File(d, "github-mcp-server").absolutePath, args = listOf("stdio"), startupTimeoutSeconds = 5)
+        val m = manager(listOf(direct), approvals, storeDir = d)
+        assertTrue(m.mayPersistTrust(direct))
+        m.prepare()
+        assertEquals(1, approvals.size)
+        assertNotNull(approvals[0].onAlwaysAllow, "a direct executable may be remembered")
+        approvals[0].onAlwaysAllow!!.invoke()
+        val again = manager(emptyList(), approvals, storeDir = d)
+        assertTrue(again.isTrusted(direct), "fingerprint trust persisted across restarts")
+        assertFalse(again.isTrusted(direct.copy(args = listOf("stdio", "--changed"))), "a changed command line is not trusted")
+    }
+
+    @Test fun legacyTrustForInterpreterLaunchIsDropped() = runBlocking {
+        val d = TestSupport.tmp("om-mcp-legacy")
+        val store = McpStore(File(d, "mcp_servers.json"), File(d, "mcp_trust.json"))
+        store.save(listOf(fake()))
+        store.saveTrust(mapOf("fake" to fake().launchFingerprint()))   // what batch2/3 "Always allow" left behind
+        val approvals = Collections.synchronizedList(mutableListOf<ApprovalRequest>())
+        val m = manager(emptyList(), approvals, storeDir = d)
+        assertFalse(m.isTrusted(fake()))
+        assertFalse(File(d, "mcp_trust.json").readText().contains("fake"), "stale entry removed from disk")
+        m.prepare()
+        assertEquals(1, approvals.size, "asked again")
+    }
+
+    @Test fun connectOnInterpreterLaunchIsConsentForOneStartOnly() = runBlocking {
+        val d = TestSupport.tmp("om-mcp-connect")
+        val approvals = Collections.synchronizedList(mutableListOf<ApprovalRequest>())
+        val m = manager(listOf(fake()), approvals, storeDir = d)
+        assertEquals("running", m.connect(fake()).state)
+        assertTrue(approvals.isEmpty(), "the Connect click itself is the consent")
+        m.stop("fake"); m.prepare()
+        assertEquals(1, approvals.size, "the next start asks again")
+        assertFalse(File(d, "mcp_trust.json").exists() && File(d, "mcp_trust.json").readText().contains("fake"))
     }
 
     @Test fun disabledServersAreNotStarted() = runBlocking {

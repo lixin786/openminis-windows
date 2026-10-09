@@ -56,8 +56,10 @@ class McpManager(
     @Volatile var servers: List<McpServerConfig> = store.load()
         private set
     private val trust = ConcurrentHashMap(store.loadTrust())
-    /** Launches allowed for this app session only (dialog "Allow"). */
+    /** Launches allowed for this app session only (dialog "Allow"); direct executables only. */
     private val sessionTrust = ConcurrentHashMap<String, String>()
+    /** Settings › Connect on an interpreter launch: consent for exactly ONE start (consumed by it). */
+    private val oneShot = ConcurrentHashMap<String, String>()
     private val clients = ConcurrentHashMap<String, McpStdioClient>()
     private val tools = ConcurrentHashMap<String, List<McpTool>>()
     private val status = ConcurrentHashMap<String, McpStatus>()
@@ -66,7 +68,32 @@ class McpManager(
 
     fun status(name: String): McpStatus = status[name] ?: McpStatus(if (servers.firstOrNull { it.name == name }?.enabled == false) "disabled" else "stopped")
     fun tools(name: String): List<McpTool> = tools[name].orEmpty()
-    fun isTrusted(s: McpServerConfig): Boolean = s.launchFingerprint().let { fp -> trust[s.name] == fp || sessionTrust[s.name] == fp }
+    /**
+     * [security] Only a direct native executable may be trusted beyond a single start. Interpreter /
+     * package-runner / script / cmd-shim launches (`python server.py`, `npx pkg`, `run.bat` …) are
+     * confirmed on every start: the fingerprint binds the command line, not the code it runs.
+     */
+    fun mayPersistTrust(s: McpServerConfig): Boolean = trustVerdict(s).persistable
+
+    fun trustVerdict(s: McpServerConfig): com.openminis.desktop.security.McpTrustPolicy.Verdict {
+        val env = baseEnv()
+        val cmd = McpLaunch.expand(s.command, env)
+        return com.openminis.desktop.security.McpTrustPolicy.verdict(cmd, isWindows,
+            com.openminis.desktop.security.McpTrustPolicy.Probe.system(env, isWindows, cwdOf(s)))
+    }
+
+    fun isTrusted(s: McpServerConfig): Boolean =
+        mayPersistTrust(s) && s.launchFingerprint().let { fp -> trust[s.name] == fp || sessionTrust[s.name] == fp }
+
+    init {
+        // [security] Drop "Always allow" entries an earlier version saved for interpreter launches.
+        val stale = trust.keys.filter { n -> servers.firstOrNull { it.name == n }?.let { !mayPersistTrust(it) } ?: false }
+        if (stale.isNotEmpty()) {
+            stale.forEach { trust.remove(it) }
+            runCatching { store.saveTrust(HashMap(trust)) }
+            AppLogger.info("MCP", "dropped persisted trust for interpreter launches: ${stale.joinToString()}")
+        }
+    }
 
     fun setServers(list: List<McpServerConfig>) {
         val byName = list.associateBy { it.name }
@@ -82,6 +109,7 @@ class McpManager(
 
     /** The user explicitly started / tested this server in Settings: that is consent for this exact launch. */
     fun trustPermanently(s: McpServerConfig) {
+        if (!mayPersistTrust(s)) { AppLogger.info("MCP", "not remembering ${s.name}: ${trustVerdict(s).reason}"); return }
         trust[s.name] = s.launchFingerprint(); store.saveTrust(HashMap(trust))
     }
 
@@ -97,9 +125,13 @@ class McpManager(
             appendLine("cwd: ${cwdOf(s).absolutePath}")
             if (s.env.isNotEmpty()) appendLine("env: ${s.env.keys.joinToString(", ")}")
         }.trim()
-        val ok = approver.approve(ApprovalRequest("mcp", "Start MCP server «${s.name}» (runs a program on this computer)", detail,
-            onAlwaysAllow = { trustPermanently(s) }, rememberLabel = "Always allow this exact command line"))
-        if (ok) sessionTrust[s.name] = s.launchFingerprint()
+        val v = trustVerdict(s)
+        val summary = if (v.persistable) "Start MCP server «${s.name}» (runs a program on this computer)"
+            else "Start MCP server «${s.name}» (runs a program on this computer; asked on every start: ${v.reason})"
+        val ok = approver.approve(ApprovalRequest("mcp", summary, detail,
+            onAlwaysAllow = if (v.persistable) ({ trustPermanently(s) }) else null,
+            rememberLabel = if (v.persistable) "Always allow this exact command line" else null))
+        if (ok && v.persistable) sessionTrust[s.name] = s.launchFingerprint()
         return ok
     }
 
@@ -121,7 +153,9 @@ class McpManager(
             setStatus(s.name, McpStatus("denied", error = "Refused: ${v.reason}"))
             throw McpException(McpException.Code.DENIED, "MCP server '${s.name}' was refused by the safety denylist: ${v.reason}")
         }
-        if (!(if (interactive) askLaunch(s) else isTrusted(s))) {
+        val fp = s.launchFingerprint()
+        val consented = oneShot.remove(s.name)?.let { it == fp } ?: false
+        if (!consented && !(if (interactive) askLaunch(s) else isTrusted(s))) {
             setStatus(s.name, McpStatus("denied", error = "Start not allowed"))
             throw McpException(McpException.Code.DENIED, "The user did not allow starting MCP server '${s.name}'.")
         }
@@ -175,9 +209,11 @@ class McpManager(
 
     /** Settings › MCP › Connect: explicit user action → trusted launch, (re)start, tool count. */
     suspend fun connect(s: McpServerConfig): McpStatus {
-        trustPermanently(s)
+        // The click is consent for this exact launch: remembered for a direct executable, one start otherwise.
+        if (mayPersistTrust(s)) trustPermanently(s) else oneShot[s.name] = s.launchFingerprint()
         stop(s.name)
         return try { ensureStarted(s.copy(enabled = true), interactive = false); status(s.name) } catch (e: McpException) { status(s.name) }
+            finally { oneShot.remove(s.name) }
     }
 
     fun allTools(): List<McpTool> = servers.filter { it.enabled }.flatMap { tools[it.name].orEmpty() }

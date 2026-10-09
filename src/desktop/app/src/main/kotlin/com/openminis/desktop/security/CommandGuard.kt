@@ -55,6 +55,9 @@ object CommandGuard {
         return Verdict(Decision.CONFIRM, "Needs the user's approval.", "confirm")
     }
 
+    /** The bare program name ([commandName] of a single token) is an interpreter (layer 7 table). */
+    fun isInterpreterName(name: String): Boolean = name.lowercase() in INTERPRETERS
+
     fun hasMetacharacters(command: String): Boolean = command.any { it in METACHARACTERS }
 
     /** Layer 7: the command starts an interpreter (also behind sudo / env / start / FOO=bar prefixes). */

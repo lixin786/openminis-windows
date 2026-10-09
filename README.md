@@ -167,7 +167,7 @@ symlink 不得逃逸（`~/link -> /tmp` 这类）；目标不存在时解析最�
 | 4 路径硬约束 | ✅ | file_read / list_dir：工作区 + 只读的 skills、attachments 目录；file_write / file_edit / shell cwd：仅工作区。越界一律硬拒绝（原「工作区外写入确认」设置已删除）。realpath、symlink/junction、目标不存在取最近祖先、`\\?\`、UNC、8.3 短名、`C:foo`、ADS `a.txt:s`、保留设备名均处理 |
 | 5 fail-closed | ✅ | 无窗口 / 审批异常 / 弹框出错 / 10 分钟无应答 → 拒绝；子智能体、计划任务、MCP 同一路径 |
 | 6 攻击回归测试 | ✅ | `security/AttackRegressionTest`（19）+ `CommandGuardTest`（8）+ `PathGuardTest`（14），含真实 symlink 逃逸、`echo >> authorized_keys` 需确认、审批异常即拒绝、误报用例（`rm -rf ./build` 只需确认、`ls -la` 免确认） |
-| 7 解释器永不记住 | ✅ | Shell 侧**不再有任何持久放行**：原来 shell 弹框的 Always allow（会永久关闭确认）已删除，改为「Allow for this session」仅在内存里记住完全相同的命令，且解释器 / 元字符 / 嵌套 / 被拦截的命令不提供该选项。升级后首次启动会把 `confirmShellCommands` 重新打开一次（旧版 Always allow 留下的关闭状态无法与手动关闭区分）。MCP 的 SHA-256 指纹永久允许保持不变 |
+| 7 解释器永不记住 | ✅ | Shell 侧**不再有任何持久放行**：原来 shell 弹框的 Always allow（会永久关闭确认）已删除，改为「Allow for this session」仅在内存里记住完全相同的命令，且解释器 / 元字符 / 嵌套 / 被拦截的命令不提供该选项。升级后首次启动会把 `confirmShellCommands` 重新打开一次（旧版 Always allow 留下的关闭状态无法与手动关闭区分）。MCP 同样执行：由解释器 / 包运行器 / 脚本启动的 server（python、node、npx、uvx、sh、pwsh、cmd、.bat/.cmd/.ps1/.py、无 .exe 扩展名而经 `cmd.exe /c` 启动的 shim，以及符号链接或 `#!` 头指向上述程序的文件）**每次启动都确认、不持久化信任**，旧版留下的此类 `mcp_trust.json` 条目启动时清除；Settings › Connect 对这类 server 只算一次启动的同意。只有直接的原生可执行文件（Windows 上为 `.exe`/`.com` 且是 PE 文件）才可记住 SHA-256 指纹 |
 | 8 PROVENANCE.md | ✅ | `src/desktop/PROVENANCE.md`，上游锁定 commit `b4c0661d5631ebab4d1a2e6f3fd4c805d4030a6c`（v1.14） |
 
 真机三条验收用例仍待在 Windows 上手动确认。
