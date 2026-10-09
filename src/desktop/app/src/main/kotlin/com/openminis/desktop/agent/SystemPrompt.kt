@@ -24,6 +24,7 @@ object SystemPrompt {
             appendLine("Your workspace folder is ${settings.workspace().absolutePath}; relative paths and the shell start there.")
             appendLine("The `shell` tool runs $shell directly on the host — there is no sandbox, so be careful with destructive commands.")
             appendLine("Prefer file_read/file_write/file_edit over shell for file contents. Work step by step and verify results.")
+            appendLine("Safety rules enforced by the app: destructive commands (deleting a drive / home / system folder, formatting, shutdown …) are refused; file tools only work inside the workspace; the user approves other commands. Never try to work around a refusal.")
         }
         appendLine("Format answers in Markdown.")
         if (settings.memoryEnabled) {

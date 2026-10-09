@@ -48,8 +48,15 @@ data class AppSettings(
     val toolsEnabled: Boolean = true,
     /** Ask before every shell command (default on — the desktop has no sandbox). */
     val confirmShellCommands: Boolean = true,
-    /** Ask before writing/editing files outside the workspace. */
-    val confirmWritesOutsideWorkspace: Boolean = true,
+    /**
+     * [security] Run allowlisted read-only commands (ls, cat, dir, Get-ChildItem, …) without asking,
+     * only when they contain no shell metacharacters and stay inside the workspace (security/CommandGuard).
+     * Files outside the workspace are always refused (the former "confirm writes outside the workspace"
+     * setting is gone: an old settings.json key is ignored).
+     */
+    val autoApproveReadOnlyShell: Boolean = true,
+    /** [security] Settings migrations already applied (see [SettingsStore.migrate]). */
+    val securityRevision: Int = 0,
     val shell: ShellKind = ShellKind.POWERSHELL,
     val shellTimeoutSeconds: Int = 120,
     val workspaceDir: String = "",
@@ -86,11 +93,36 @@ data class AppSettings(
 class SettingsStore(private val file: File) {
     private val json = Json { ignoreUnknownKeys = true; prettyPrint = true; encodeDefaults = true }
 
-    fun load(): AppSettings = try {
-        if (file.exists()) json.decodeFromString(AppSettings.serializer(), file.readText(Charsets.UTF_8)) else AppSettings()
-    } catch (e: Exception) {
-        com.openminis.app.logging.AppLogger.error("Settings", "settings.json unreadable, using defaults", e)
-        AppSettings()
+    fun load(): AppSettings {
+        val loaded = try {
+            if (file.exists()) json.decodeFromString(AppSettings.serializer(), file.readText(Charsets.UTF_8)) else AppSettings()
+        } catch (e: Exception) {
+            com.openminis.app.logging.AppLogger.error("Settings", "settings.json unreadable, using defaults", e)
+            AppSettings()
+        }
+        val migrated = migrate(loaded)
+        if (migrated != loaded && file.exists()) {
+            com.openminis.app.logging.AppLogger.warning("Settings", "security migration r${loaded.securityRevision} → r${migrated.securityRevision}: shell confirmation re-enabled")
+            runCatching { save(migrated) }
+        }
+        return migrated
+    }
+
+    companion object {
+        const val SECURITY_REVISION = 1
+
+        /**
+         * r1 (security batch): before it, "Always allow" on a shell approval permanently switched
+         * `confirmShellCommands` off — a persisted shell allow, which is no longer permitted. That
+         * value cannot be told apart from the Settings toggle, so confirmation is switched back on
+         * once; the user can turn it off again in Settings (metacharacter / interpreter commands
+         * still ask even then). Old `confirmWritesOutsideWorkspace` keys are ignored (hard refusal now).
+         */
+        fun migrate(s: AppSettings): AppSettings {
+            var m = s
+            if (m.securityRevision < 1) m = m.copy(confirmShellCommands = true)
+            return if (m.securityRevision < SECURITY_REVISION) m.copy(securityRevision = SECURITY_REVISION) else m
+        }
     }
 
     fun save(settings: AppSettings) {

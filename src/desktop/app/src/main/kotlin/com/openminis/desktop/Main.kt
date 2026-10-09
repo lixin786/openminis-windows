@@ -74,6 +74,11 @@ fun main(args: Array<String>) {
                 minOf(com.openminis.desktop.core.WindowPlacements.MIN_W, placement.width),
                 minOf(com.openminis.desktop.core.WindowPlacements.MIN_H, placement.height),
             )
+            // [security] Approvals are only asked while this window exists; otherwise they are denied.
+            androidx.compose.runtime.DisposableEffect(Unit) {
+                state.windowAvailable = true
+                onDispose { state.windowAvailable = false }
+            }
             // An approval request must not wait unseen behind other windows.
             androidx.compose.runtime.LaunchedEffect(state.pendingApproval) {
                 if (state.pendingApproval != null) {

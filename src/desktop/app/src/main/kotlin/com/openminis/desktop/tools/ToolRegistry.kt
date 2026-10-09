@@ -1,6 +1,9 @@
 // OpenMinis Desktop — agent tools: shell, file_read, file_write, file_edit, list_dir, memory_write, memory_get.
 // Tool names/semantics follow the Android app (tools/FileReadTool, FileWriteTool, FileEditTool,
 // MemoryTools); paths are host paths instead of PRoot paths.
+// Security hardening batch: shell commands go through security/CommandGuard (denylist hard block,
+// metacharacter guard, read-only allowlist), file paths through security/PathGuard (hard refusal
+// outside the workspace), approvals through security/FailClosedApprover (any failure = deny).
 // Copyright (C) OpenMinis contributors. Licensed under the GNU GPL v3 (see LICENSE).
 package com.openminis.desktop.tools
 
@@ -8,14 +11,23 @@ import com.openminis.app.data.model.AgentToolDefinition
 import com.openminis.app.data.model.AgentToolParam
 import com.openminis.desktop.core.AppSettings
 import com.openminis.desktop.core.ShellKind
+import com.openminis.desktop.security.CommandGuard
+import com.openminis.desktop.security.FailClosedApprover
+import com.openminis.desktop.security.PathGuard
+import com.openminis.desktop.security.SessionShellApprovals
 import org.json.JSONObject
 import java.io.File
 
 /** What the UI is asked to approve before a side-effecting tool runs. */
 data class ApprovalRequest(
     val toolName: String, val summary: String, val detail: String,
-    /** What "Always allow" means for this request; null = the tool's default (shell / file confirmation off). */
+    /**
+     * What the dialog's second "allow" button remembers; null = no such button (just Allow / Deny).
+     * Shell: an exact command for this app session only (never persisted); MCP: the launch fingerprint.
+     */
     val onAlwaysAllow: (() -> Unit)? = null,
+    /** Label of that button ("Always allow", "Allow for this session"). */
+    val rememberLabel: String? = null,
 )
 
 fun interface ToolApprover {
@@ -27,10 +39,22 @@ data class ToolOutcome(val content: String, val isError: Boolean = false, val de
 class ToolRegistry(
     private val settings: () -> AppSettings,
     private val memory: MemoryStore,
-    private val approver: ToolApprover,
+    approver: ToolApprover,
+    /**
+     * Extra folders the agent may READ (never write): the app's skills folder (the model reads
+     * SKILL.md files listed in the system prompt) and the attachments folder (host paths of
+     * attached files are given to the model). The workspace is always readable and writable.
+     */
+    private val readRoots: () -> List<File>,
 ) {
+    /** Workspace-only file access (tests, simple callers); keeps `ToolRegistry(s, m) { approve }` working. */
+    constructor(settings: () -> AppSettings, memory: MemoryStore, approver: ToolApprover) :
+        this(settings, memory, approver, { emptyList() })
+
+    private val approver: ToolApprover = FailClosedApprover.wrap(approver)
     private fun ws(): File = settings().workspace().also { it.mkdirs() }
 
+    /** Lexical resolution only (no confinement) — kept for display; tools use [confine]. */
     fun resolvePath(raw: String): File {
         val p = raw.trim().removeSurrounding("\"")
         val expanded = if (p.startsWith("~")) System.getProperty("user.home") + p.drop(1) else p
@@ -38,8 +62,19 @@ class ToolRegistry(
         return (if (f.isAbsolute) f else File(ws(), expanded)).normalize()
     }
 
-    private fun isInsideWorkspace(f: File): Boolean =
-        f.canonicalFile.toPath().startsWith(ws().canonicalFile.toPath())
+    /** [write] = workspace only; read = workspace + [readRoots]. */
+    private fun confine(raw: String, write: Boolean): PathGuard.Result {
+        val w = ws()
+        val wsReal = PathGuard.realRoot(w) ?: return PathGuard.Result.Refused("the workspace folder ${w.absolutePath} does not exist")
+        if (PathGuard.isFileSystemRoot(wsReal)) return PathGuard.Result.Refused("the workspace is a drive / file-system root ($wsReal); choose a folder in Settings › Tools & shell")
+        return PathGuard.resolve(raw, w, if (write) listOf(w) else listOf(w) + readRoots())
+    }
+
+    private fun refused(r: PathGuard.Result.Refused, what: String) = ToolOutcome(
+        "Refused: $what — ${r.reason}. File tools only work inside the workspace (${ws().absolutePath})" +
+            " (reading is also allowed in the app's skills and attachments folders). This is a fixed safety rule, not a question for the user.",
+        isError = true, denied = true,
+    )
 
     fun definitions(): List<AgentToolDefinition> {
         val s = settings()
@@ -54,7 +89,7 @@ class ToolRegistry(
                 name = "shell",
                 description = "$shellDesc Working directory is the agent workspace (${ws().absolutePath}). " +
                     "Returns combined stdout/stderr and the exit code. Non-interactive: never run commands that wait for input. " +
-                    (if (s.confirmShellCommands) "The user approves each command before it runs." else ""),
+                    "Commands that could destroy data or the system are refused outright; others may need the user's approval.",
                 parameters = linkedMapOf(
                     "command" to AgentToolParam("string", "The command line to execute."),
                     "timeout_seconds" to AgentToolParam("integer", "Optional timeout in seconds (default ${s.shellTimeoutSeconds}, max 1800)."),
@@ -135,15 +170,48 @@ class ToolRegistry(
         ToolOutcome("Error: ${e.javaClass.simpleName}: ${e.message}", isError = true)
     }
 
+    /** Whether [cmd] needs the dialog under [s] (after the denylist said it may run at all). */
+    internal fun needsApproval(cmd: String, s: AppSettings, verdict: CommandGuard.Verdict): Boolean = when {
+        verdict.decision == CommandGuard.Decision.AUTO_ALLOW -> false
+        // Session memory and "confirmation off" never cover metacharacters / interpreters / nested payloads.
+        !CommandGuard.mayBeRememberedForSession(cmd) -> true
+        SessionShellApprovals.contains(cmd) -> false
+        else -> s.confirmShellCommands
+    }
+
     private suspend fun shell(args: JSONObject): ToolOutcome {
         val s = settings()
         val cmd = args.optString("command").trim()
         if (cmd.isEmpty()) return ToolOutcome("Error: command is empty", isError = true)
-        if (s.confirmShellCommands &&
-            !approver.approve(ApprovalRequest("shell", "Run ${s.shell.label} command", cmd))
-        ) return ToolOutcome("The user declined to run this command.", isError = true, denied = true)
+        val verdict = CommandGuard.inspect(cmd, s.autoApproveReadOnlyShell)
+        if (verdict.blocked) {
+            com.openminis.app.logging.AppLogger.warning("ShellGuard", "blocked [${verdict.rule}] $cmd")
+            return ToolOutcome(
+                "Refused by the safety denylist: ${verdict.reason}\nThe command was NOT run and cannot be approved. " +
+                    "Do not try to work around this rule; if the user really needs it, they must run it themselves.",
+                isError = true, denied = true,
+            )
+        }
+        val cwd = when (val r = confine(".", write = true)) {
+            is PathGuard.Result.Allowed -> r.file
+            is PathGuard.Result.Refused -> return refused(r, "shell working directory")
+        }
+        if (needsApproval(cmd, s, verdict)) {
+            val remember = CommandGuard.mayBeRememberedForSession(cmd)
+            val why = when {
+                CommandGuard.hasMetacharacters(cmd) -> " (contains shell operators: redirection, pipes, chaining or substitution)"
+                CommandGuard.isInterpreter(cmd) -> " (starts an interpreter)"
+                else -> ""
+            }
+            val ok = approver.approve(ApprovalRequest(
+                "shell", "Run ${s.shell.label} command$why", cmd,
+                onAlwaysAllow = if (remember) ({ SessionShellApprovals.add(cmd) }) else null,
+                rememberLabel = if (remember) "Allow for this session" else null,
+            ))
+            if (!ok) return ToolOutcome("The user declined to run this command.", isError = true, denied = true)
+        }
         val timeout = args.optInt("timeout_seconds", s.shellTimeoutSeconds).coerceIn(1, 1800)
-        val r = ShellRunner.run(s.shell, cmd, ws(), timeout)
+        val r = ShellRunner.run(s.shell, cmd, cwd, timeout)
         val status = when {
             r.timedOut -> "Timed out after ${timeout}s (process killed)."
             else -> "Exit code: ${r.exitCode}"
@@ -152,9 +220,12 @@ class ToolRegistry(
     }
 
     private fun fileRead(args: JSONObject): ToolOutcome {
-        val f = resolvePath(args.optString("path"))
+        val f = when (val r = confine(args.optString("path"), write = false)) {
+            is PathGuard.Result.Allowed -> r.file
+            is PathGuard.Result.Refused -> return refused(r, "file_read")
+        }
         if (!f.exists()) return ToolOutcome("Error: file not found: ${f.absolutePath}", isError = true)
-        if (f.isDirectory) return listDir(JSONObject().put("path", f.absolutePath))
+        if (f.isDirectory) return listDirOf(f)
         if (f.length() > 20L * 1024 * 1024) return ToolOutcome("Error: file is larger than 20 MB", isError = true)
         val bytes = f.readBytes()
         if (bytes.take(8000).any { it == 0.toByte() }) return ToolOutcome("Error: ${f.name} looks like a binary file (${bytes.size} bytes)", isError = true)
@@ -170,25 +241,24 @@ class ToolRegistry(
         return ToolOutcome(ShellRunner.truncate(body, 60_000).first + more)
     }
 
-    private suspend fun confirmOutside(f: File, verb: String, preview: String): Boolean {
-        val s = settings()
-        if (!s.confirmWritesOutsideWorkspace || isInsideWorkspace(f)) return true
-        return approver.approve(ApprovalRequest("file", "$verb outside the workspace", "${f.absolutePath}\n\n${preview.take(2000)}"))
-    }
-
-    private suspend fun fileWrite(args: JSONObject): ToolOutcome {
-        val f = resolvePath(args.optString("path"))
+    private fun fileWrite(args: JSONObject): ToolOutcome {
+        val f = when (val r = confine(args.optString("path"), write = true)) {
+            is PathGuard.Result.Allowed -> r.file
+            is PathGuard.Result.Refused -> return refused(r, "file_write")
+        }
         val content = args.optString("content")
         val append = args.optBoolean("append", false)
-        if (!confirmOutside(f, if (append) "Append to file" else "Write file", content))
-            return ToolOutcome("The user declined this write.", isError = true, denied = true)
+        if (f.isDirectory) return ToolOutcome("Error: ${f.absolutePath} is a directory", isError = true)
         f.parentFile?.mkdirs()
         if (append) f.appendText(content, Charsets.UTF_8) else f.writeText(content, Charsets.UTF_8)
         return ToolOutcome("${if (append) "Appended" else "Wrote"} ${content.toByteArray().size} bytes to ${f.absolutePath}")
     }
 
-    private suspend fun fileEdit(args: JSONObject): ToolOutcome {
-        val f = resolvePath(args.optString("path"))
+    private fun fileEdit(args: JSONObject): ToolOutcome {
+        val f = when (val r = confine(args.optString("path"), write = true)) {
+            is PathGuard.Result.Allowed -> r.file
+            is PathGuard.Result.Refused -> return refused(r, "file_edit")
+        }
         if (!f.isFile) return ToolOutcome("Error: file not found: ${f.absolutePath}", isError = true)
         val old = args.optString("old_string")
         val new = args.optString("new_string")
@@ -198,15 +268,20 @@ class ToolRegistry(
         if (count == 0) return ToolOutcome("Error: old_string not found in ${f.name}", isError = true)
         val all = args.optBoolean("replace_all", false)
         if (count > 1 && !all) return ToolOutcome("Error: old_string matches $count times; add context or set replace_all", isError = true)
-        if (!confirmOutside(f, "Edit file", "- $old\n+ $new"))
-            return ToolOutcome("The user declined this edit.", isError = true, denied = true)
         f.writeText(if (all) text.replace(old, new) else text.replaceFirst(old, new))
         return ToolOutcome("Edited ${f.absolutePath} ($count replacement${if (count > 1 && all) "s" else ""})")
     }
 
     private fun listDir(args: JSONObject): ToolOutcome {
-        val raw = args.optString("path", "")
-        val d = if (raw.isBlank()) ws() else resolvePath(raw)
+        val raw = args.optString("path", "").ifBlank { "." }
+        val d = when (val r = confine(raw, write = false)) {
+            is PathGuard.Result.Allowed -> r.file
+            is PathGuard.Result.Refused -> return refused(r, "list_dir")
+        }
+        return listDirOf(d)
+    }
+
+    private fun listDirOf(d: File): ToolOutcome {
         if (!d.isDirectory) return ToolOutcome("Error: not a directory: ${d.absolutePath}", isError = true)
         val entries = (d.listFiles() ?: emptyArray()).sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase() }))
         val body = entries.take(500).joinToString("\n") { if (it.isDirectory) "${it.name}/" else "${it.name}  (${it.length()} B)" }

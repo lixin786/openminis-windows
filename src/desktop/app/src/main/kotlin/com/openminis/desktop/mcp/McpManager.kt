@@ -98,7 +98,7 @@ class McpManager(
             if (s.env.isNotEmpty()) appendLine("env: ${s.env.keys.joinToString(", ")}")
         }.trim()
         val ok = approver.approve(ApprovalRequest("mcp", "Start MCP server «${s.name}» (runs a program on this computer)", detail,
-            onAlwaysAllow = { trustPermanently(s) }))
+            onAlwaysAllow = { trustPermanently(s) }, rememberLabel = "Always allow this exact command line"))
         if (ok) sessionTrust[s.name] = s.launchFingerprint()
         return ok
     }
@@ -116,6 +116,11 @@ class McpManager(
         clients.remove(s.name)?.close()
         if (!s.isStdio) throw McpException(McpException.Code.UNSUPPORTED, "MCP server '${s.name}' uses the HTTP transport, which the desktop app does not support yet.")
         if (!s.enabled) throw McpException(McpException.Code.DENIED, "MCP server '${s.name}' is disabled.")
+        // [security] The shell denylist also applies to MCP command lines (even trusted ones).
+        com.openminis.desktop.security.CommandGuard.inspect(commandLineText(s), readOnlyAutoApprove = false).takeIf { it.blocked }?.let { v ->
+            setStatus(s.name, McpStatus("denied", error = "Refused: ${v.reason}"))
+            throw McpException(McpException.Code.DENIED, "MCP server '${s.name}' was refused by the safety denylist: ${v.reason}")
+        }
         if (!(if (interactive) askLaunch(s) else isTrusted(s))) {
             setStatus(s.name, McpStatus("denied", error = "Start not allowed"))
             throw McpException(McpException.Code.DENIED, "The user did not allow starting MCP server '${s.name}'.")
@@ -200,7 +205,8 @@ class McpManager(
             ?: return ToolOutcome("Error: unknown MCP tool $exposedName", isError = true)
         val s = servers.firstOrNull { it.name == t.server } ?: return ToolOutcome("Error: MCP server ${t.server} was removed", isError = true)
         if (s.confirmToolCalls && !approver.approve(ApprovalRequest("mcp", "Call MCP tool «${t.name}» on «${s.name}»", args.toString(2).take(4000),
-                onAlwaysAllow = { setServers(servers.map { if (it.name == s.name) it.copy(confirmToolCalls = false) else it }) }))) {
+                onAlwaysAllow = { setServers(servers.map { if (it.name == s.name) it.copy(confirmToolCalls = false) else it }) },
+                rememberLabel = "Always allow this server's tools"))) {
             return ToolOutcome("The user denied this MCP tool call.", isError = true, denied = true)
         }
         var attempt = 0

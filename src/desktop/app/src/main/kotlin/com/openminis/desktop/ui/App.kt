@@ -703,20 +703,22 @@ internal fun AttachmentChip(state: AppState, a: Attachment, onRemove: (() -> Uni
 // ---------------------------------------------------------------- Approval
 
 /**
- * Keyboard: Enter = Allow, Esc = Deny, Ctrl+Enter or A = Always allow. The Allow button takes focus
+ * Keyboard: Enter = Allow, Esc = Deny, Ctrl+Enter or A = the request's remember option (MCP "Always allow",
+ * shell "Allow for this session") when it offers one. The Allow button takes focus
  * when the dialog opens (Tab / Shift+Tab move between the buttons, Space/Enter press the focused one).
  */
 @Composable
 private fun ApprovalDialog(state: AppState, p: PendingApproval) {
     val allowFocus = remember { FocusRequester() }
+    val rememberLabel = if (p.request.onAlwaysAllow != null) p.request.rememberLabel ?: "Always allow" else null
     LaunchedEffect(p) { kotlinx.coroutines.delay(60); runCatching { allowFocus.requestFocus() } }
     AlertDialog(
         onDismissRequest = { state.answerApproval(allow = false) },   // Esc
         modifier = Modifier.onPreviewKeyEvent { ev ->
             if (ev.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
             when {
-                (ev.key == Key.Enter || ev.key == Key.NumPadEnter) && ev.isCtrlPressed -> { state.answerApproval(allow = true, dontAskAgain = true); true }
-                ev.key == Key.A && !ev.isCtrlPressed && !ev.isAltPressed -> { state.answerApproval(allow = true, dontAskAgain = true); true }
+                (ev.key == Key.Enter || ev.key == Key.NumPadEnter) && ev.isCtrlPressed -> { if (rememberLabel != null) state.answerApproval(allow = true, dontAskAgain = true); true }
+                ev.key == Key.A && !ev.isCtrlPressed && !ev.isAltPressed && rememberLabel != null -> { state.answerApproval(allow = true, dontAskAgain = true); true }
                 ev.key == Key.Enter || ev.key == Key.NumPadEnter -> { state.answerApproval(allow = true); true }
                 ev.key == Key.Escape -> { state.answerApproval(allow = false); true }
                 else -> false
@@ -730,14 +732,14 @@ private fun ApprovalDialog(state: AppState, p: PendingApproval) {
                 Spacer(Modifier.height(8.dp))
                 MonoBlock(p.request.detail)
                 Spacer(Modifier.height(6.dp))
-                Text("Enter = Allow · Esc = Deny · Ctrl+Enter or A = Always allow", style = MaterialTheme.typography.labelSmall,
+                Text("Enter = Allow · Esc = Deny" + (rememberLabel?.let { " · Ctrl+Enter or A = $it" } ?: ""), style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         },
         confirmButton = {
             Row {
-                TextButton(onClick = { state.answerApproval(allow = true, dontAskAgain = true) },
-                    modifier = Modifier.semantics { contentDescription = "Always allow (Ctrl+Enter or A)" }) { Text("Always allow (Ctrl+Enter / A)") }
+                if (rememberLabel != null) TextButton(onClick = { state.answerApproval(allow = true, dontAskAgain = true) },
+                    modifier = Modifier.semantics { contentDescription = "$rememberLabel (Ctrl+Enter or A)" }) { Text("$rememberLabel (Ctrl+Enter / A)") }
                 Button(onClick = { state.answerApproval(allow = true) },
                     modifier = Modifier.focusRequester(allowFocus).semantics { contentDescription = "Allow (Enter)" }) { Text("Allow (Enter)") }
             }

@@ -159,7 +159,8 @@ fun SettingsDialog(state: AppState, onClose: () -> Unit) {
                         Section("Tools & shell")
                         Toggle("Enable tools (shell, files, memory)", draft.toolsEnabled) { draft = draft.copy(toolsEnabled = it) }
                         Toggle("Ask before running every shell command", draft.confirmShellCommands) { draft = draft.copy(confirmShellCommands = it) }
-                        Toggle("Ask before writing files outside the workspace", draft.confirmWritesOutsideWorkspace) { draft = draft.copy(confirmWritesOutsideWorkspace = it) }
+                        Toggle("Run read-only commands without asking (ls, cat, dir, Get-ChildItem … with no operators, inside the workspace)", draft.autoApproveReadOnlyShell) { draft = draft.copy(autoApproveReadOnlyShell = it) }
+                        Hint("Always enforced: destructive commands (rm -rf /, format C:, Remove-Item -Recurse C:\\ …) are refused outright; commands with > < | ; & ` \$( ) or that start an interpreter always ask, even with the switch above off; file tools only work inside the workspace. \"Allow for this session\" is never saved.")
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text("Shell:", Modifier.width(140.dp))
                             Dropdown(

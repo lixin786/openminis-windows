@@ -37,6 +37,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.withLock
 import java.io.File
 
 class PendingApproval(val request: ApprovalRequest, val answer: CompletableDeferred<Boolean>)
@@ -84,12 +85,29 @@ class AppState(val paths: AppPaths, private val scope: CoroutineScope) {
 
     private var job: Job? = null
 
-    private val approver = ToolApprover { req ->
-        val d = CompletableDeferred<Boolean>()
-        withContext(Dispatchers.Main) { pendingApproval = PendingApproval(req, d) }
-        try { d.await() } finally { withContext(Dispatchers.Main + kotlinx.coroutines.NonCancellable) { pendingApproval = null } }
-    }
-    private val tools = ToolRegistry({ settings }, memory, approver)
+    /** Set by the main window while it is shown; approvals without a window are denied (fail-closed). */
+    @Volatile var windowAvailable: Boolean = false
+    private val approvalLock = kotlinx.coroutines.sync.Mutex()
+
+    /**
+     * One dialog at a time (parallel requests queue). Fail-closed (security/FailClosedApprover): no
+     * window, a dialog error or no answer within 10 minutes = deny — main chat, sub agents and
+     * scheduled runs alike.
+     */
+    private val approver: ToolApprover = com.openminis.desktop.security.FailClosedApprover(
+        ToolApprover { req ->
+            approvalLock.withLock {
+                val d = CompletableDeferred<Boolean>()
+                withContext(Dispatchers.Main) { pendingApproval = PendingApproval(req, d) }
+                try { d.await() } finally { withContext(Dispatchers.Main + kotlinx.coroutines.NonCancellable) { pendingApproval = null } }
+            }
+        },
+        timeoutMs = com.openminis.desktop.security.FailClosedApprover.UI_TIMEOUT_MS,
+        available = { windowAvailable && !java.awt.GraphicsEnvironment.isHeadless() },
+    )
+    /** Read-only extra roots of the file tools: skills and attachments (the model gets those host paths). */
+    private fun readRoots(): List<File> = listOf(paths.skillsDir, paths.attachmentsDir)
+    private val tools = ToolRegistry({ settings }, memory, approver, ::readRoots)
 
     // [P1-2] Sub agents: roster in subagents.json; the main loop's toolbox gains `subagent_task`.
     private val subAgentStore = com.openminis.desktop.subagents.SubAgentStore(File(paths.root, "subagents.json"))
@@ -101,7 +119,7 @@ class AppState(val paths: AppPaths, private val scope: CoroutineScope) {
         providerFactory = { s, ref -> DesktopProviderFactory.create(s, ref) },
         config = { subAgentConfig },
         // A child's shell / file approvals go through the same dialog as the parent's (labelled with the agent).
-        childRegistry = { appr -> ToolRegistry({ settings }, memory, appr) },
+        childRegistry = { appr -> ToolRegistry({ settings }, memory, appr, ::readRoots) },
         approver = approver,
         childPromptBase = { s -> SystemPrompt.build(s, memory, skills) },
         onProgress = { r ->
@@ -203,7 +221,7 @@ class AppState(val paths: AppPaths, private val scope: CoroutineScope) {
         val labelled = ToolApprover { req -> approver.approve(req.copy(summary = "Scheduled task «$label»: ${req.summary}")) }
         val runEngine = AgentEngine(
             providerFactory = { st, ref -> DesktopProviderFactory.create(st, ref) },
-            tools = subAgents.toolbox(com.openminis.desktop.mcp.McpToolbox(com.openminis.desktop.agent.RegistryToolbox(ToolRegistry({ settings }, memory, labelled)), mcp)),
+            tools = subAgents.toolbox(com.openminis.desktop.mcp.McpToolbox(com.openminis.desktop.agent.RegistryToolbox(ToolRegistry({ settings }, memory, labelled, ::readRoots)), mcp)),
             shaper = shaper,
         )
         val conv = withContext(Dispatchers.Main) { conversations.first { it.id == convId } }
@@ -493,13 +511,9 @@ class AppState(val paths: AppPaths, private val scope: CoroutineScope) {
 
     fun answerApproval(allow: Boolean, dontAskAgain: Boolean = false) {
         val p = pendingApproval ?: return
-        if (allow && dontAskAgain && (p.request.onAlwaysAllow != null || p.request.toolName == "mcp")) {
-            runCatching { p.request.onAlwaysAllow?.invoke() }
-        } else if (allow && dontAskAgain && p.request.toolName == "shell") {
-            updateSettings(settings.copy(confirmShellCommands = false))
-        } else if (allow && dontAskAgain && p.request.toolName == "file") {
-            updateSettings(settings.copy(confirmWritesOutsideWorkspace = false))
-        }
+        // [security] Only what the request itself offers is remembered (MCP launch fingerprint, an exact
+        // shell command for this session). A shell approval never switches confirmation off any more.
+        if (allow && dontAskAgain) p.request.onAlwaysAllow?.let { runCatching(it) }
         p.answer.complete(allow)
     }
 

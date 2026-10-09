@@ -132,7 +132,7 @@ class SubAgentTest {
     @Test fun childShellCommandStillAsksForApprovalAndHonoursDeny() {
         val server = MockWebServer().also { it.start() }
         server.enqueue(toolCalls("subagent_task" to delegate("Delete stuff")))
-        server.enqueue(toolCalls("shell" to JSONObject().put("command", "echo SHOULD_NOT_RUN")))
+        server.enqueue(toolCalls("shell" to JSONObject().put("command", "mkdir SHOULD_NOT_RUN")))
         server.enqueue(openAiText("could not run it"))
         server.enqueue(openAiText("ok"))
         val s = settings(server, confirm = true)
@@ -144,7 +144,7 @@ class SubAgentTest {
         assertTrue(req.detail.contains("SHOULD_NOT_RUN"))
         server.takeRequest(); server.takeRequest()
         val childAfterTool = body(server.takeRequest())
-        assertFalse(lastToolResult(childAfterTool).contains("SHOULD_NOT_RUN\n"), "denied command must not have run")
+        assertFalse(lastToolResult(childAfterTool).contains("Exit code"), "denied command must not have run")
         server.shutdown()
     }
 

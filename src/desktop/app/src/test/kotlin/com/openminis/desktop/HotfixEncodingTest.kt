@@ -112,7 +112,7 @@ class HotfixEncodingTest {
 
     @Test fun fileToolsKeepChinesePathsAndContent() = runBlocking {
         val ws = Files.createTempDirectory("om-fs").toFile()
-        val settings = AppSettings(workspaceDir = ws.absolutePath, confirmWritesOutsideWorkspace = false)
+        val settings = AppSettings(workspaceDir = ws.absolutePath)
         val reg = ToolRegistry({ settings }, MemoryStore(Files.createTempDirectory("m").toFile())) { true }
         val w = reg.execute("file_write", JSONObject().put("path", "笔记/测试 文件.md").put("content", sample))
         assertFalse(w.isError, w.content)

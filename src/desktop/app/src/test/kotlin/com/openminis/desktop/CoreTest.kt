@@ -61,15 +61,15 @@ class CoreTest {
         assertTrue(reg.execute("nope", JSONObject()).isError)
     }
 
-    @Test fun writesOutsideWorkspaceNeedApproval() = runBlocking {
+    @Test fun writesOutsideWorkspaceAreRefusedEvenWhenTheUserWouldAllow() = runBlocking {
+        // [security] was "need approval"; now a hard refusal — no dialog is even shown.
         val ws = tmp(); val outside = File(tmp(), "x.txt")
         val settings = AppSettings(workspaceDir = ws.absolutePath)
-        val denied = ToolRegistry({ settings }, MemoryStore(tmp())) { false }
+        var asked = false
+        val r = ToolRegistry({ settings }, MemoryStore(tmp())) { asked = true; true }
             .execute("file_write", JSONObject().put("path", outside.absolutePath).put("content", "x"))
-        assertTrue(denied.denied); assertFalse(outside.exists())
-        val allowed = ToolRegistry({ settings }, MemoryStore(tmp())) { true }
-            .execute("file_write", JSONObject().put("path", outside.absolutePath).put("content", "x"))
-        assertFalse(allowed.isError); assertTrue(outside.exists())
+        assertTrue(r.denied && r.isError, r.content); assertFalse(outside.exists()); assertFalse(asked)
+        assertTrue(r.content.contains("outside the workspace"), r.content)
     }
 
     @Test fun shellToolRespectsConfirmation() = runBlocking {
@@ -77,10 +77,11 @@ class CoreTest {
         var asked: ApprovalRequest? = null
         val settings = AppSettings(workspaceDir = ws.absolutePath, confirmShellCommands = true)
         val reg = ToolRegistry({ settings }, MemoryStore(tmp())) { asked = it; false }
-        val r = reg.execute("shell", JSONObject().put("command", "echo hi"))
-        assertTrue(r.denied); assertEquals("echo hi", asked?.detail)
+        val r = reg.execute("shell", JSONObject().put("command", "mkdir hi"))
+        assertTrue(r.denied); assertEquals("mkdir hi", asked?.detail)
         if (!AppPaths.isWindows) {
-            val run = ToolRegistry({ settings.copy(confirmShellCommands = false) }, MemoryStore(tmp())) { false }
+            // `&&` is a metacharacter: it asks even with confirmation off (here: the user allows).
+            val run = ToolRegistry({ settings.copy(confirmShellCommands = false) }, MemoryStore(tmp())) { true }
                 .execute("shell", JSONObject().put("command", "echo hi && pwd"))
             assertFalse(run.isError, run.content)
             assertTrue(run.content.contains("hi")); assertTrue(run.content.contains("Exit code: 0"))
@@ -122,7 +123,9 @@ class CoreTest {
     @Test fun storesRoundTrip() {
         val dir = tmp()
         val ss = SettingsStore(File(dir, "settings.json"))
-        val s = AppSettings(activeProvider = ProviderKind.GEMINI).withProvider(ProviderKind.GEMINI, ProviderSettings(apiKey = "k", model = "gemini-2.5-pro"))
+        // securityRevision current: a round trip of already-migrated settings is lossless.
+        val s = AppSettings(activeProvider = ProviderKind.GEMINI, securityRevision = SettingsStore.SECURITY_REVISION)
+            .withProvider(ProviderKind.GEMINI, ProviderSettings(apiKey = "k", model = "gemini-2.5-pro"))
         ss.save(s)
         assertEquals(s, ss.load())
         val cs = ConversationStore(File(dir, "conv"))
