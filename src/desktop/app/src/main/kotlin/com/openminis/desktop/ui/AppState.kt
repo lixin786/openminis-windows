@@ -45,7 +45,10 @@ class AppState(val paths: AppPaths, private val scope: CoroutineScope) {
     private val settingsStore = SettingsStore(paths.settingsFile)
     private val store = ConversationStore(paths.conversationsDir)
     val memory = MemoryStore(paths.memoryDir)
-    val skills = SkillLoader { listOf(paths.skillsDir, File(settings.workspace(), ".skills")) }
+    val skills = SkillLoader { skillRoots() }
+    fun skillRoots(): List<File> = listOf(paths.skillsDir, File(settings.workspace(), ".skills"))
+    /** [P1-3] Imports go to %APPDATA%\OpenMinis\skills; downloads use the app's proxy settings. */
+    val skillImporter = com.openminis.desktop.skills.SkillImporter({ paths.skillsDir.also { it.mkdirs() } }, { com.openminis.desktop.net.DesktopHttp.newClient(30) })
 
     var settings by mutableStateOf(settingsStore.load())
         private set
@@ -113,6 +116,8 @@ class AppState(val paths: AppPaths, private val scope: CoroutineScope) {
         com.openminis.desktop.mcp.McpStore(File(paths.root, "mcp_servers.json"), File(paths.root, "mcp_trust.json")),
         approver, { settings.workspace() },
     )
+    /** A light one-line hint shown under a conversation until its next turn (e.g. MCP servers skipped). */
+    val chatNotices = mutableStateMapOf<String, String?>()
     /** Bumped whenever an MCP server's status changes (settings list recomposes). */
     var mcpTick by mutableStateOf(0)
         private set
@@ -124,6 +129,12 @@ class AppState(val paths: AppPaths, private val scope: CoroutineScope) {
 
     /** Tool names a sub agent can be restricted to (for the settings editor). */
     fun toolNames(): List<String> = tools.definitions().map { it.name } + com.openminis.desktop.subagents.SubAgentProtocol.TOOL_NAME
+
+    internal fun mcpDeniedNotice(denied: List<String>): String? = when {
+        denied.isEmpty() -> null
+        else -> "Skipped MCP server " + denied.joinToString(", ") { "«$it»" } +
+            " — you denied starting it, so its tools are not available in this turn. Settings › MCP servers › Connect starts it."
+    }
 
     fun updateMcpServers(list: List<com.openminis.desktop.mcp.McpServerConfig>) = scope.launch(Dispatchers.IO) { mcp.setServers(list) }
     fun connectMcp(sv: com.openminis.desktop.mcp.McpServerConfig) = scope.launch(Dispatchers.IO) { mcp.connect(sv) }
@@ -300,8 +311,11 @@ class AppState(val paths: AppPaths, private val scope: CoroutineScope) {
             var final: ChatMessage? = null
             try {
                 if (s.toolsEnabled && mcp.servers.any { it.enabled }) {
-                    val problems = withContext(Dispatchers.IO) { mcp.prepare() }
-                    if (problems.isNotEmpty()) withContext(Dispatchers.Main) { toast = problems.joinToString("\n") }
+                    val r = withContext(Dispatchers.IO) { mcp.prepare() }
+                    withContext(Dispatchers.Main) {
+                        if (r.problems.isNotEmpty()) toast = r.problems.joinToString("\n")
+                        chatNotices[convId] = mcpDeniedNotice(r.denied)
+                    }
                 }
                 val prompt = withContext(Dispatchers.IO) { mainPrompt(s) }
                 final = withContext(Dispatchers.IO) { engine.runTurn(history, s, prompt, ctx, listener) }

@@ -7,7 +7,11 @@ import java.io.File
 
 data class ParsedSkill(val name: String, val description: String, val version: String = "1.0.0", val body: String)
 
-data class Skill(val name: String, val description: String, val version: String, val file: File, val body: String)
+data class Skill(val name: String, val description: String, val version: String, val file: File, val body: String) {
+    /** Folder name — the stable id used for enable/disable (upstream: the slug of the name). */
+    val id: String get() = file.parentFile.name
+    val dir: File get() = file.parentFile
+}
 
 object SkillMd {
     fun parseSkillMd(content: String): ParsedSkill? {
@@ -101,7 +105,7 @@ class SkillLoader(private val roots: () -> List<File>) {
     fun load(): List<Skill> = roots().flatMap { root ->
         (root.listFiles { f -> f.isDirectory } ?: emptyArray()).mapNotNull { dir ->
             val md = File(dir, "SKILL.md").takeIf { it.isFile } ?: File(dir, "skill.md").takeIf { it.isFile } ?: return@mapNotNull null
-            val parsed = runCatching { SkillMd.parseSkillMd(md.readText()) }.getOrNull() ?: return@mapNotNull null
+            val parsed = runCatching { SkillMd.parseSkillMd(md.readText(Charsets.UTF_8)) }.getOrNull() ?: return@mapNotNull null
             Skill(parsed.name, parsed.description, parsed.version, md, parsed.body)
         }
     }.distinctBy { it.name }.sortedBy { it.name.lowercase() }

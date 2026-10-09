@@ -199,10 +199,7 @@ fun SettingsDialog(state: AppState, onClose: () -> Unit) {
 
                         Section("Skills")
                         Toggle("Enable skills (SKILL.md folders)", draft.skillsEnabled) { draft = draft.copy(skillsEnabled = it) }
-                        val skills = remember { runCatching { state.skills.load() }.getOrDefault(emptyList()) }
-                        Hint("${skills.size} skill(s) found. Put each skill in its own folder containing SKILL.md under ${state.paths.skillsDir.absolutePath} or <workspace>\\.skills.")
-                        skills.take(30).forEach { Text("• ${it.name} — ${it.description.take(100)}", style = MaterialTheme.typography.bodySmall) }
-                        OutlinedButton(onClick = { state.openInExplorer(state.paths.skillsDir) }) { Text("Open skills folder") }
+                        SkillsSection(state, draft.disabledSkills) { draft = draft.copy(disabledSkills = it) }
 
                         Section("Data")
                         Hint("App data: ${state.paths.root.absolutePath}")

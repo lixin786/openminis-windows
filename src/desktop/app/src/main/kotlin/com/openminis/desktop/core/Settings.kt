@@ -71,6 +71,8 @@ data class AppSettings(
     val maxInlineTextChars: Int = 60_000,
     /** Settings → Network (proxy, connect/TLS timeout). */
     val network: com.openminis.desktop.net.NetworkSettings = com.openminis.desktop.net.NetworkSettings(),
+    /** [P1-3] Skill folder ids switched off in Settings › Skills (kept on disk, left out of the prompt). */
+    val disabledSkills: List<String> = emptyList(),
 ) {
     fun provider(kind: ProviderKind = activeProvider): ProviderSettings = providers[kind] ?: ProviderSettings()
     /** The model the next turn starts on. */
@@ -85,7 +87,7 @@ class SettingsStore(private val file: File) {
     private val json = Json { ignoreUnknownKeys = true; prettyPrint = true; encodeDefaults = true }
 
     fun load(): AppSettings = try {
-        if (file.exists()) json.decodeFromString(AppSettings.serializer(), file.readText()) else AppSettings()
+        if (file.exists()) json.decodeFromString(AppSettings.serializer(), file.readText(Charsets.UTF_8)) else AppSettings()
     } catch (e: Exception) {
         com.openminis.app.logging.AppLogger.error("Settings", "settings.json unreadable, using defaults", e)
         AppSettings()

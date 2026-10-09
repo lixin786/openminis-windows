@@ -282,6 +282,13 @@ private fun ChatPane(state: AppState, modifier: Modifier) {
             }
         }
         if (state.runningConversationId == conv?.id) SubAgentBlock(state)
+        conv?.id?.let { state.chatNotices[it] }?.let { notice ->
+            Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("ⓘ $notice", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f))
+                TextButton(onClick = { state.chatNotices.remove(conv.id) }) { Text("Dismiss") }
+            }
+        }
         val status = state.statusText.takeIf { state.runningConversationId == conv?.id || state.compactingConversationId == conv?.id }
         if (status != null || state.compactingConversationId == conv?.id) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {

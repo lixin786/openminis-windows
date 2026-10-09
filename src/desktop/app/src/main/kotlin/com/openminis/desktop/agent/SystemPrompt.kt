@@ -36,7 +36,7 @@ object SystemPrompt {
             }
         }
         if (settings.skillsEnabled && settings.toolsEnabled) {
-            skills.promptFragment()?.let { appendLine(); appendLine(it) }
+            skills.promptFragment(skills.load().filter { it.id !in settings.disabledSkills })?.let { appendLine(); appendLine(it) }
         }
         if (settings.systemPrompt.isNotBlank()) {
             appendLine()

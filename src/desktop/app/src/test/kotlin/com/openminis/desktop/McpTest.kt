@@ -51,7 +51,7 @@ class McpTest {
 
     @Test fun handshakePagedToolsAndCallsWithUtf8() = runBlocking {
         val m = manager(listOf(fake()))
-        assertTrue(m.prepare().isEmpty())
+        assertTrue(m.prepare().isEmpty)
         assertEquals(listOf("echo", "fail", "slow", "crash", "env", "image"), m.tools("fake").map { it.name }, "tools/list followed nextCursor")
         assertEquals("mcp__fake__echo", m.tools("fake").first().exposedName)
         val sample = "你好，世界 🎉 Ünïcødé\n第二行"
@@ -99,7 +99,7 @@ class McpTest {
     @Test fun launchNeedsApprovalOncePerCommandLine() = runBlocking {
         val approvals = Collections.synchronizedList(mutableListOf<ApprovalRequest>())
         val denied = manager(listOf(fake()), approvals, allow = false)
-        denied.prepare()
+        assertEquals(listOf("fake"), denied.prepare().denied, "a denied launch is reported (chat shows a hint)")
         assertEquals(1, approvals.size)
         assertEquals("mcp", approvals[0].toolName)
         assertTrue(approvals[0].summary.contains("Start MCP server «fake»"))
@@ -107,8 +107,10 @@ class McpTest {
         assertEquals(0, launches(), "nothing started when denied")
         assertEquals("denied", denied.status("fake").state)
         assertTrue(denied.definitions().isEmpty())
-        denied.prepare()
+        val second = denied.prepare()
         assertEquals(1, approvals.size, "not asked again in the same session after a deny")
+        assertEquals(listOf("fake"), second.denied, "still reported as skipped on later turns")
+        assertTrue(second.problems.isEmpty())
 
         val dir2 = TestSupport.tmp("om-mcp2")
         approvals.clear()

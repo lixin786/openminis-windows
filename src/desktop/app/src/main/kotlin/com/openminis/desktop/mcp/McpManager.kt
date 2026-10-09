@@ -144,20 +144,28 @@ class McpManager(
         }
     }
 
+    /** What [prepare] could not start: real failures, and servers skipped because the user denied the launch. */
+    data class PrepareResult(val problems: List<String>, val denied: List<String>) {
+        val isEmpty: Boolean get() = problems.isEmpty() && denied.isEmpty()
+    }
+
     /**
      * Before a turn: start every enabled server (each new / changed launch asks the user once) so the
-     * model sees their tools. A server that fails or is refused is reported and skipped.
+     * model sees their tools. A server that fails or is refused is reported and skipped — a refused one
+     * is not asked again this app session (Settings › Connect starts it).
      */
-    suspend fun prepare(): List<String> {
+    suspend fun prepare(): PrepareResult {
         val problems = mutableListOf<String>()
+        val denied = mutableListOf<String>()
         for (s in servers.filter { it.enabled && it.isStdio }.take(McpDefaults.MAX_SERVERS)) {
             if (clients[s.name]?.isAlive == true) continue
-            if (status[s.name]?.state == "denied" && !isTrusted(s)) continue // asked already this session
+            if (status[s.name]?.state == "denied" && !isTrusted(s)) { denied += s.name; continue }
             try { ensureStarted(s) } catch (e: McpException) {
-                if (e.code != McpException.Code.DENIED) problems += "MCP server «${s.name}»: ${e.message}"
+                if (e.code == McpException.Code.DENIED) denied += s.name
+                else problems += "MCP server «${s.name}»: ${e.message}"
             }
         }
-        return problems
+        return PrepareResult(problems, denied)
     }
 
     /** Settings › MCP › Connect: explicit user action → trusted launch, (re)start, tool count. */
