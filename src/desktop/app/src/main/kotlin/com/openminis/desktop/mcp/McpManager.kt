@@ -195,10 +195,11 @@ class McpManager(
      * model sees their tools. A server that fails or is refused is reported and skipped — a refused one
      * is not asked again this app session (Settings › Connect starts it).
      */
-    suspend fun prepare(): PrepareResult {
+    suspend fun prepare(excluded: Set<String> = emptySet()): PrepareResult {
         val problems = mutableListOf<String>()
         val denied = mutableListOf<String>()
-        for (s in servers.filter { it.enabled && it.isStdio }.take(McpDefaults.MAX_SERVERS)) {
+        // A server switched off for this chat is not started for it (and so never asks for launch consent).
+        for (s in servers.filter { it.enabled && it.isStdio && it.name !in excluded }.take(McpDefaults.MAX_SERVERS)) {
             if (clients[s.name]?.isAlive == true) continue
             if (status[s.name]?.state == "denied" && !isTrusted(s)) { denied += s.name; continue }
             try { ensureStarted(s) } catch (e: McpException) {
@@ -220,7 +221,7 @@ class McpManager(
 
     fun allTools(): List<McpTool> = servers.filter { it.enabled }.flatMap { tools[it.name].orEmpty() }
 
-    fun definitions(): List<AgentToolDefinition> = allTools().map { t ->
+    fun definitions(excluded: Set<String> = emptySet()): List<AgentToolDefinition> = allTools().filter { it.server !in excluded }.map { t ->
         val props = t.inputSchema.optJSONObject("properties") ?: JSONObject()
         val params = LinkedHashMap<String, AgentToolParam>()
         props.keys().forEach { k ->
@@ -237,6 +238,9 @@ class McpManager(
     }
 
     fun owns(exposedName: String): Boolean = allTools().any { it.exposedName == exposedName }
+
+    /** Server that offers [exposedName], or null. */
+    fun serverOf(exposedName: String): String? = allTools().firstOrNull { it.exposedName == exposedName }?.server
 
     suspend fun call(exposedName: String, args: JSONObject): ToolOutcome {
         val t = allTools().firstOrNull { it.exposedName == exposedName }
@@ -309,14 +313,21 @@ class McpManager(
     }
 }
 
-/** Adds the MCP tools to a loop's toolbox. */
-class McpToolbox(private val inner: Toolbox, private val mcp: McpManager) : Toolbox {
+/**
+ * Adds the MCP tools to a loop's toolbox. [excluded] = servers switched off for the chat this loop runs in:
+ * their tools are not offered, and a call to one (a stale tool name from history) is refused.
+ */
+class McpToolbox(private val inner: Toolbox, private val mcp: McpManager, private val excluded: () -> Set<String> = { emptySet() }) : Toolbox {
     override fun definitions(): List<AgentToolDefinition> {
         val own = inner.definitions()
         val names = own.map { it.name }.toSet()
-        return own + mcp.definitions().filter { it.name !in names }
+        return own + mcp.definitions(excluded()).filter { it.name !in names }
     }
-    override suspend fun execute(name: String, args: JSONObject): ToolOutcome =
-        if (name.startsWith("mcp__") && mcp.owns(name)) mcp.call(name, args) else inner.execute(name, args)
+    override suspend fun execute(name: String, args: JSONObject): ToolOutcome {
+        if (!name.startsWith("mcp__") || !mcp.owns(name)) return inner.execute(name, args)
+        val server = mcp.serverOf(name)
+        if (server != null && server in excluded()) return ToolOutcome("Error: MCP server «$server» is turned off for this chat.", isError = true)
+        return mcp.call(name, args)
+    }
     override fun runsConcurrently(name: String) = inner.runsConcurrently(name)
 }

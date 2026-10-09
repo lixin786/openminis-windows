@@ -3,6 +3,7 @@
 package com.openminis.desktop.ui
 
 import com.openminis.desktop.core.DEFAULT_CONVERSATION_TITLE
+import com.openminis.desktop.mcp.McpChatScope
 import com.openminis.desktop.i18n.tr
 
 import androidx.compose.runtime.getValue
@@ -142,12 +143,14 @@ class AppState(val paths: AppPaths, private val scope: CoroutineScope) {
     /** Bumped whenever an MCP server's status changes (settings list recomposes). */
     var mcpTick by mutableStateOf(0)
         private set
+    /** MCP servers switched off for the chat the main loop is running (set at turn start; one main turn at a time). */
+    @Volatile private var turnMcpOff: Set<String> = emptySet()
     // Lazy: the toolbox needs the scheduler, which is declared further down.
     private val engine by lazy {
         AgentEngine(
             providerFactory = { s, ref -> DesktopProviderFactory.create(s, ref) },
             tools = com.openminis.desktop.scheduled.ScheduledToolbox(
-                subAgents.toolbox(com.openminis.desktop.mcp.McpToolbox(com.openminis.desktop.agent.RegistryToolbox(tools), mcp)),
+                subAgents.toolbox(com.openminis.desktop.mcp.McpToolbox(com.openminis.desktop.agent.RegistryToolbox(tools), mcp) { turnMcpOff }),
                 scheduler, approver, currentConversation = { runningConversationId },
                 describe = { t -> describeTrigger(t, lang = "en") { id -> scheduler.list().firstOrNull { it.id == id }?.label ?: id } },
                 describeUi = { t -> describeTrigger(t) { id -> scheduler.list().firstOrNull { it.id == id }?.label ?: id } },
@@ -222,9 +225,10 @@ class AppState(val paths: AppPaths, private val scope: CoroutineScope) {
         if (!ok) return com.openminis.desktop.scheduled.ScheduledOutcome(null, "The target chat was deleted.", ok = false)
         val label = t.label.ifBlank { tr("scheduled.default_label") }
         val labelled = ToolApprover { req -> approver.approve(req.copy(summary = tr("scheduled.approval_prefix", label, req.summary))) }
+        val runOff = withContext(Dispatchers.Main) { conversations.firstOrNull { it.id == convId }?.mcpOff.orEmpty().toSet() }
         val runEngine = AgentEngine(
             providerFactory = { st, ref -> DesktopProviderFactory.create(st, ref) },
-            tools = subAgents.toolbox(com.openminis.desktop.mcp.McpToolbox(com.openminis.desktop.agent.RegistryToolbox(ToolRegistry({ settings }, memory, labelled, ::readRoots)), mcp)),
+            tools = subAgents.toolbox(com.openminis.desktop.mcp.McpToolbox(com.openminis.desktop.agent.RegistryToolbox(ToolRegistry({ settings }, memory, labelled, ::readRoots)), mcp) { runOff }),
             shaper = shaper,
         )
         val conv = withContext(Dispatchers.Main) { conversations.first { it.id == convId } }
@@ -233,8 +237,8 @@ class AppState(val paths: AppPaths, private val scope: CoroutineScope) {
         val latest = java.util.concurrent.atomic.AtomicReference<ChatMessage?>(null)
         var final: ChatMessage? = null
         try {
-            if (s.toolsEnabled && mcp.servers.any { it.enabled }) withContext(Dispatchers.IO) { mcp.prepare() }
-            val promptText = withContext(Dispatchers.IO) { mainPrompt(s) }
+            if (s.toolsEnabled && mcp.servers.any { it.enabled && it.name !in runOff }) withContext(Dispatchers.IO) { mcp.prepare(runOff) }
+            val promptText = withContext(Dispatchers.IO) { mainPrompt(s, runOff) }
             final = withContext(Dispatchers.IO) {
                 runEngine.runTurn(conv.messages, s, promptText, ctx, object : TurnListener {
                     override fun onUpdate(message: ChatMessage) { latest.set(message); scope.launch(Dispatchers.Main) { scheduledStreaming[convId] = message } }
@@ -265,16 +269,16 @@ class AppState(val paths: AppPaths, private val scope: CoroutineScope) {
     }
 
     /** Main-chat system prompt: base + the sub agent roster when delegation is available. */
-    private fun mainPrompt(s: AppSettings): String {
+    private fun mainPrompt(s: AppSettings, off: Set<String> = emptySet()): String {
         val base = SystemPrompt.build(s, memory, skills)
         val roster = if (s.toolsEnabled) subAgents.promptSection(0) else ""
-        val mcpPart = if (s.toolsEnabled) mcpPromptSection() else ""
+        val mcpPart = if (s.toolsEnabled) mcpPromptSection(off) else ""
         return listOf(base, roster, mcpPart).filter { it.isNotBlank() }.joinToString("\n\n")
     }
 
     /** Upstream MCPRepository.mcpPromptFragment, desktop wording: the tools are native `mcp__…` tools. */
-    private fun mcpPromptSection(): String {
-        val running = mcp.servers.filter { it.enabled && mcp.tools(it.name).isNotEmpty() }.sortedByDescending { it.createdAt }.take(com.openminis.desktop.mcp.McpDefaults.MAX_SERVERS)
+    private fun mcpPromptSection(off: Set<String>): String {
+        val running = mcp.servers.filter { it.enabled && it.name !in off && mcp.tools(it.name).isNotEmpty() }.sortedByDescending { it.createdAt }.take(com.openminis.desktop.mcp.McpDefaults.MAX_SERVERS)
         if (running.isEmpty()) return ""
         return buildString {
             appendLine("Available MCP Servers (their tools are offered to you as mcp__<server>__<tool>):")
@@ -344,6 +348,11 @@ class AppState(val paths: AppPaths, private val scope: CoroutineScope) {
         renamingId = null
         val clean = com.openminis.desktop.core.ConversationSearch.cleanTitle(title) ?: return
         mutate(id, persist = true) { if (it.title == clean && it.titleLocked) it else it.copy(title = clean, titleLocked = true) }
+    }
+
+    /** Switch one MCP server on/off for one chat; takes effect from the chat's next turn. */
+    fun setChatMcp(convId: String, server: String, on: Boolean) = mutate(convId, persist = true) {
+        it.copy(mcpOff = McpChatScope.withServer(it.mcpOff, server, on))
     }
 
     fun togglePin(id: String) = mutate(id, persist = true) { it.copy(pinned = !it.pinned) }
@@ -430,6 +439,8 @@ class AppState(val paths: AppPaths, private val scope: CoroutineScope) {
         runningConversationId = convId
         streaming = null
         val history = conv.messages
+        val off = conv.mcpOff.toSet()
+        turnMcpOff = off
         val ctx = contextStateFor(conv)
         val latest = java.util.concurrent.atomic.AtomicReference<ChatMessage?>(null)
         val listener = object : TurnListener {
@@ -446,14 +457,14 @@ class AppState(val paths: AppPaths, private val scope: CoroutineScope) {
         job = scope.launch {
             var final: ChatMessage? = null
             try {
-                if (s.toolsEnabled && mcp.servers.any { it.enabled }) {
-                    val r = withContext(Dispatchers.IO) { mcp.prepare() }
+                if (s.toolsEnabled && mcp.servers.any { it.enabled && it.name !in off }) {
+                    val r = withContext(Dispatchers.IO) { mcp.prepare(off) }
                     withContext(Dispatchers.Main) {
                         if (r.problems.isNotEmpty()) toast = r.problems.joinToString("\n")
                         chatNotices[convId] = mcpDeniedNotice(r.denied)
                     }
                 }
-                val prompt = withContext(Dispatchers.IO) { mainPrompt(s) }
+                val prompt = withContext(Dispatchers.IO) { mainPrompt(s, off) }
                 final = withContext(Dispatchers.IO) { engine.runTurn(history, s, prompt, ctx, listener) }
             } catch (e: CancellationException) {
                 final = latest.get()
@@ -515,7 +526,7 @@ class AppState(val paths: AppPaths, private val scope: CoroutineScope) {
         val conv = conversations.firstOrNull { it.id == convId } ?: return
         val s = settings
         scope.launch(Dispatchers.IO) {
-            val r = runCatching { engine.measure(conv.messages, s, mainPrompt(s), contextStateFor(conv)) }.getOrNull()
+            val r = runCatching { engine.measure(conv.messages, s, mainPrompt(s, conv.mcpOff.toSet()), contextStateFor(conv)) }.getOrNull()
             withContext(Dispatchers.Main) { if (r != null) contextReadings[convId] = r else contextReadings.remove(convId) }
         }
     }

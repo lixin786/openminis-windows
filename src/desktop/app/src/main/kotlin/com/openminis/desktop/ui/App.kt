@@ -72,6 +72,7 @@ import com.openminis.desktop.core.ChatRole
 import com.openminis.desktop.core.Conversation
 import com.openminis.desktop.core.ConversationSearch
 import kotlinx.coroutines.launch
+import com.openminis.desktop.mcp.McpChatScope
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.isSecondaryPressed
@@ -497,6 +498,7 @@ private fun TopBar(state: AppState, conv: Conversation?) {
                 modifier = Modifier.padding(end = 4.dp),
             )
         }
+        if (conv != null && state.mcp.servers.isNotEmpty()) McpChatButton(state, conv)
         IconButton(
             onClick = { state.compactNow() },
             enabled = conv != null && conv.messages.isNotEmpty() && !state.isRunning && state.compactingConversationId == null,
@@ -519,6 +521,72 @@ private fun TopBar(state: AppState, conv: Conversation?) {
             label = { I18n.trOr("thinking.$it", it.lowercase().replaceFirstChar(Char::uppercase)) },
             onSelect = { state.updateSettings(s.copy(thinkingLevel = it)) },
         )
+    }
+}
+
+/** Toolbar "MCP a/b" + panel: switch Settings' servers on/off for this chat, see their state and tools. */
+@Composable
+private fun McpChatButton(state: AppState, conv: Conversation) {
+    @Suppress("UNUSED_VARIABLE") val tick = state.mcpTick  // recompose on server status changes
+    var open by remember { mutableStateOf(false) }
+    val servers = state.mcp.servers
+    val (on, enabled) = McpChatScope.counts(servers, conv.mcpOff)
+    Box {
+        TextButton(onClick = { open = true }) {
+            Icon(Icons.Default.Extension, null, Modifier.size(16.dp))
+            Spacer(Modifier.width(4.dp))
+            Text(tr("chatmcp.badge", on, enabled), style = MaterialTheme.typography.labelMedium)
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            Column(Modifier.width(380.dp).padding(horizontal = 12.dp, vertical = 4.dp)) {
+                Text(tr("chatmcp.title"), style = MaterialTheme.typography.titleSmall)
+                Text(tr("chatmcp.hint"), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (state.isRunning && state.runningConversationId == conv.id)
+                    Text(tr("chatmcp.next_turn"), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.tertiary)
+                Spacer(Modifier.height(6.dp))
+                McpChatScope.rows(servers, conv.mcpOff).forEach { row -> McpChatRow(state, conv, row) }
+                HorizontalDivider(Modifier.padding(vertical = 6.dp))
+                TextButton(onClick = { open = false; state.showSettings = true }) { Text(tr("chatmcp.open_settings")) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun McpChatRow(state: AppState, conv: Conversation, row: McpChatScope.Row) {
+    val sv = row.server
+    val st = state.mcp.status(sv.name)
+    var showTools by remember(sv.name) { mutableStateOf(false) }
+    val tools = state.mcp.tools(sv.name)
+    Column(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Switch(row.onInChat, { state.setChatMcp(conv.id, sv.name, it) }, enabled = row.globallyEnabled,
+                modifier = Modifier.semantics { contentDescription = tr("chatmcp.toggle", sv.name) })
+            Spacer(Modifier.width(8.dp))
+            Column(Modifier.weight(1f)) {
+                Text(sv.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                val stText = when {
+                    !row.globallyEnabled -> tr("chatmcp.off_in_settings")
+                    st.state == "running" -> tr("mcp.state.running", st.toolCount)
+                    else -> I18n.trOr("mcp.state.${st.state}", st.state)
+                }
+                Text(stText, style = MaterialTheme.typography.labelSmall,
+                    color = if (st.state == "error") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            if (tools.isNotEmpty()) IconButton(onClick = { showTools = !showTools }, modifier = Modifier.size(28.dp)) {
+                Icon(if (showTools) Icons.Default.ExpandLess else Icons.Default.ExpandMore, tr(if (showTools) "tool.collapse" else "tool.expand"), Modifier.size(18.dp))
+            }
+            if (row.onInChat && sv.isStdio && st.state != "running" && st.state != "starting")
+                TextButton(onClick = { state.connectMcp(sv) }) { Text(tr("mcp.connect")) }
+        }
+        st.error?.takeIf { row.globallyEnabled }?.let {
+            Text(it.take(300), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error, maxLines = 3, overflow = TextOverflow.Ellipsis)
+        }
+        if (showTools) tools.forEach { t ->
+            Text("· " + t.name, style = MaterialTheme.typography.labelSmall, fontFamily = FontFamily.Monospace,
+                color = if (row.onInChat) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 52.dp), maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
     }
 }
 

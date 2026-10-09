@@ -174,6 +174,42 @@ class McpTest {
         assertEquals("disabled", m.status("fake").state)
     }
 
+    @Test fun serversSwitchedOffForAChatAreNotStartedOfferedOrCalled() = runBlocking {
+        val approvals = Collections.synchronizedList(mutableListOf<ApprovalRequest>())
+        val m = manager(listOf(fake("a"), fake("b")), approvals)
+        assertTrue(m.prepare(excluded = setOf("b")).isEmpty)
+        assertEquals("running", m.status("a").state)
+        assertEquals("stopped", m.status("b").state, "an excluded server is not launched (and so not asked about)")
+        assertEquals(1, launches())
+        val off = mutableSetOf("a")
+        val box = McpToolbox(RegistryToolbox(ToolRegistry({ AppSettings() }, MemoryStore(TestSupport.tmp("om-m"))) { true }), m) { off }
+        assertTrue(box.definitions().none { it.name.startsWith("mcp__a__") }, "tools of a server switched off for the chat are not offered")
+        val refused = box.execute("mcp__a__echo", JSONObject().put("text", "x"))
+        assertTrue(refused.isError && "turned off for this chat" in refused.content, refused.content)
+        off.clear()
+        assertTrue(box.definitions().any { it.name == "mcp__a__echo" })
+        assertEquals("echo: x", box.execute("mcp__a__echo", JSONObject().put("text", "x")).content)
+    }
+
+    @Test fun chatScopeSwitches() {
+        val a = fake("a"); val b = fake("b"); val c = fake("c").copy(enabled = false)
+        assertEquals(listOf("b"), McpChatScope.withServer(emptyList(), "b", on = false))
+        assertEquals(listOf("b"), McpChatScope.withServer(listOf("b"), "b", on = false), "no duplicates")
+        assertEquals(emptyList(), McpChatScope.withServer(listOf("b"), "b", on = true))
+        val rows = McpChatScope.rows(listOf(a, b, c), listOf("b", "gone"))
+        assertEquals(listOf(true, false, false), rows.map { it.onInChat })
+        assertEquals(listOf(true, true, false), rows.map { it.globallyEnabled })
+        assertEquals(1 to 2, McpChatScope.counts(listOf(a, b, c), listOf("b")))
+        // Persisted with the chat; old files without the field load with every server on.
+        val dir = TestSupport.tmp("om-conv")
+        val store = ConversationStore(dir)
+        store.save(Conversation(id = "x", mcpOff = listOf("b"), messages = listOf(ChatMessage(role = ChatRole.USER, text = "hi"))))
+        File(dir, "old.json").writeText("""{"id":"old","title":"t","createdAt":1,"updatedAt":2}""")
+        val byId = store.loadAll().associateBy { it.id }
+        assertEquals(listOf("b"), byId.getValue("x").mcpOff)
+        assertEquals(emptyList(), byId.getValue("old").mcpOff)
+    }
+
     @Test fun perCallConfirmation() = runBlocking {
         val approvals = Collections.synchronizedList(mutableListOf<ApprovalRequest>())
         val m = manager(listOf(fake(confirm = true)), approvals)
