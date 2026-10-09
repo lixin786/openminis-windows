@@ -150,6 +150,7 @@ fun App(state: AppState) {
             }
             state.pendingApproval?.let { ApprovalDialog(state, it) }
             if (state.showSettings) SettingsDialog(state) { state.showSettings = false }
+            if (state.showScheduled) ScheduledTasksWindow(state) { state.showScheduled = false }
             state.toast?.let { msg ->
                 AlertDialog(onDismissRequest = { state.toast = null }, confirmButton = {
                     TextButton(onClick = { state.toast = null }) { Text("OK") }
@@ -167,6 +168,7 @@ private fun Sidebar(state: AppState, modifier: Modifier) {
     Column(modifier.background(MaterialTheme.colorScheme.surfaceVariant).padding(10.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("OpenMinis", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+            IconButton(onClick = { state.showScheduled = true }) { Icon(Icons.Default.Schedule, "Scheduled tasks") }
             IconButton(onClick = { state.showSettings = true }) { Icon(Icons.Default.Settings, "Settings (Ctrl+,)") }
         }
         Spacer(Modifier.height(6.dp))
@@ -244,6 +246,7 @@ private fun ChatPane(state: AppState, modifier: Modifier) {
         HorizontalDivider()
         val messages = conv?.messages.orEmpty()
         val streaming = state.streaming.takeIf { state.runningConversationId == conv?.id }
+            ?: conv?.id?.let { state.scheduledStreaming[it] }
         val listState = rememberLazyListState()
         val total = messages.size + (if (streaming != null || state.runningConversationId == conv?.id) 1 else 0)
         // Follow the stream while the user is at the bottom.
@@ -270,7 +273,7 @@ private fun ChatPane(state: AppState, modifier: Modifier) {
                         }
                         dividerAfter[idx]?.let { mk -> CompactDivider(state, conv!!.id, mk, isLatest = mk === markers.last()) }
                     }
-                    if (state.runningConversationId == conv?.id) {
+                    if (state.runningConversationId == conv?.id || conv?.id?.let { state.scheduledRunning.containsKey(it) } == true) {
                         item(key = "streaming") {
                             if (streaming != null) MessageItem(state, streaming, isLast = false, live = true)
                             else Row(Modifier.padding(24.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -282,6 +285,15 @@ private fun ChatPane(state: AppState, modifier: Modifier) {
             }
         }
         if (state.runningConversationId == conv?.id) SubAgentBlock(state)
+        conv?.id?.let { id -> state.scheduledRunning[id]?.let { label ->
+            Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                CircularProgressIndicator(Modifier.size(12.dp), strokeWidth = 2.dp)
+                Spacer(Modifier.width(8.dp))
+                Text("⏰ Scheduled task «$label» is running in this chat", style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+                TextButton(onClick = { state.stopScheduled(id) }) { Text("Stop") }
+            }
+        } }
         conv?.id?.let { state.chatNotices[it] }?.let { notice ->
             Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("ⓘ $notice", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,

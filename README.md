@@ -16,6 +16,7 @@
 | batch1（P0） | 上下文压缩、图片/附件输入、模型回退链、中英文分词记忆检索 |
 | hotfix1 | 修复 UTF-8 解码乱码（中文 Windows 上按 GBK 解流式响应）、窗口尺寸超出屏幕、新增网络代理设置（跟随系统 / 直连 / 手动） |
 | hotfix2 | HTTP/2 流重置：设置 → Network → HTTP protocol（Auto / HTTP/1.1 only）；Auto 下遇 `stream was reset` 按主机自动降级 HTTP/1.1 并立即重试；重置来源诊断（本地 cancel / 对端）；修连接超时输入框被钳到 3 秒；补回 gradle-wrapper.jar |
+| batch3 | P1：技能导入界面（GitHub 链接/zip/文件夹/粘贴，开关/删除）；计划任务（定时/延时/间隔/接力，新对话或续写，运行记录，agent 工具 scheduled_task；应用运行时触发）；MCP 拒绝启动后对话内提示 |
 | batch2 | P1：MCP stdio 客户端（mcp_servers.json，Claude Desktop 配置可直接导入，启动前确认，工具以 mcp__服务器__工具 暴露）；子智能体（subagent_task，与上游同 schema，并发/深度上限，子任务命令仍需确认）；修复等待响应头时 Stop 卡住 |
 | hotfix3 | 经代理在响应头之后被掐断流时提示「本地代理可能掐断流式连接，建议直连 / 加入绕过列表」；失败诊断（来源 LOCAL/PEER、协议、路由、耗时）写入可复制的错误文本 |
 

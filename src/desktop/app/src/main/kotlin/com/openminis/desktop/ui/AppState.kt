@@ -121,11 +121,18 @@ class AppState(val paths: AppPaths, private val scope: CoroutineScope) {
     /** Bumped whenever an MCP server's status changes (settings list recomposes). */
     var mcpTick by mutableStateOf(0)
         private set
-    private val engine = AgentEngine(
-        providerFactory = { s, ref -> DesktopProviderFactory.create(s, ref) },
-        tools = subAgents.toolbox(com.openminis.desktop.mcp.McpToolbox(com.openminis.desktop.agent.RegistryToolbox(tools), mcp)),
-        shaper = shaper,
-    )
+    // Lazy: the toolbox needs the scheduler, which is declared further down.
+    private val engine by lazy {
+        AgentEngine(
+            providerFactory = { s, ref -> DesktopProviderFactory.create(s, ref) },
+            tools = com.openminis.desktop.scheduled.ScheduledToolbox(
+                subAgents.toolbox(com.openminis.desktop.mcp.McpToolbox(com.openminis.desktop.agent.RegistryToolbox(tools), mcp)),
+                scheduler, approver, currentConversation = { runningConversationId },
+                describe = { t -> describeTrigger(t) { id -> scheduler.list().firstOrNull { it.id == id }?.label ?: id } },
+            ),
+            shaper = shaper,
+        )
+    }
 
     /** Tool names a sub agent can be restricted to (for the settings editor). */
     fun toolNames(): List<String> = tools.definitions().map { it.name } + com.openminis.desktop.subagents.SubAgentProtocol.TOOL_NAME
@@ -138,7 +145,98 @@ class AppState(val paths: AppPaths, private val scope: CoroutineScope) {
 
     fun updateMcpServers(list: List<com.openminis.desktop.mcp.McpServerConfig>) = scope.launch(Dispatchers.IO) { mcp.setServers(list) }
     fun connectMcp(sv: com.openminis.desktop.mcp.McpServerConfig) = scope.launch(Dispatchers.IO) { mcp.connect(sv) }
-    fun shutdown() { runCatching { mcp.shutdown() } }
+    fun shutdown() { runCatching { scheduler.stop() }; runCatching { mcp.shutdown() } }
+
+    // ------------------------------------------------------------ scheduled tasks (P1-4)
+
+    /** Scheduled runs in progress: conversation id → task label (the chat shows it, the composer waits). */
+    val scheduledRunning = mutableStateMapOf<String, String>()
+    /** Partial reply of a scheduled run, per conversation (shown like a live reply when that chat is open). */
+    val scheduledStreaming = mutableStateMapOf<String, ChatMessage>()
+    var showScheduled by mutableStateOf(false)
+    /** Bumped when a task or its run records change (the Scheduled tasks window recomposes). */
+    var scheduledTick by mutableStateOf(0)
+        private set
+    val scheduler = com.openminis.desktop.scheduled.DesktopScheduler(
+        com.openminis.desktop.scheduled.ScheduledStore(File(paths.root, "scheduled_tasks.json")), scope,
+        runner = { t, prompt -> runScheduled(t, prompt) },
+    )
+
+    /** Desktop meaning of upstream `modelId`: "<PROVIDER>/<model>" (null = the app's active model). */
+    internal fun applyTaskModel(base: AppSettings, t: com.openminis.app.scheduled.ScheduledTask): AppSettings {
+        var s = base
+        t.modelId?.let { id ->
+            val kind = com.openminis.desktop.core.ProviderKind.entries.firstOrNull { id.startsWith(it.name + "/") }
+            if (kind != null) s = s.withProvider(kind, s.provider(kind).copy(model = id.substringAfter('/'))).copy(activeProvider = kind)
+        }
+        t.thinkingLevel?.let { s = s.copy(thinkingLevel = it.name) }
+        return s
+    }
+
+    /** One scheduled fire: a new chat or a follow-up in an existing chat, run without the user at the keyboard. */
+    private suspend fun runScheduled(t: com.openminis.app.scheduled.ScheduledTask, prompt: String): com.openminis.desktop.scheduled.ScheduledOutcome {
+        val target = t.targetMode
+        val convId: String = when (target) {
+            is com.openminis.app.scheduled.ScheduledTargetMode.NewSession -> withContext(Dispatchers.Main) {
+                val c = Conversation(title = "⏰ " + t.label.ifBlank { titleFrom(prompt) })
+                conversations.add(0, c); c.id
+            }
+            is com.openminis.app.scheduled.ScheduledTargetMode.AppendToSession -> target.sessionId
+            else -> return com.openminis.desktop.scheduled.ScheduledOutcome(null, "This target (${target.encode().substringBefore(':')}) is not supported on desktop yet.", ok = false)
+        }
+        // Never write into a chat while the user's own turn (or another scheduled run) is running in it.
+        while (runningConversationId == convId || compactingConversationId == convId || scheduledRunning.containsKey(convId)) kotlinx.coroutines.delay(500)
+        val ok = withContext(Dispatchers.Main) {
+            if (conversations.none { it.id == convId }) return@withContext false
+            scheduledRunning[convId] = t.label.ifBlank { "Scheduled task" }
+            scheduledTaskOfConv[convId] = t.id
+            val s0 = settings
+            mutate(convId, persist = true) {
+                it.copy(messages = it.messages + ChatMessage(role = ChatRole.USER, text = prompt), updatedAt = System.currentTimeMillis(),
+                    provider = s0.activeProvider, model = s0.provider().effectiveModel(s0.activeProvider))
+            }
+            conversations.indexOfFirst { it.id == convId }.takeIf { it > 0 }?.let { conversations.add(0, conversations.removeAt(it)) }
+            true
+        }
+        if (!ok) return com.openminis.desktop.scheduled.ScheduledOutcome(null, "The target chat was deleted.", ok = false)
+        val label = t.label.ifBlank { "Scheduled task" }
+        val labelled = ToolApprover { req -> approver.approve(req.copy(summary = "Scheduled task «$label»: ${req.summary}")) }
+        val runEngine = AgentEngine(
+            providerFactory = { st, ref -> DesktopProviderFactory.create(st, ref) },
+            tools = subAgents.toolbox(com.openminis.desktop.mcp.McpToolbox(com.openminis.desktop.agent.RegistryToolbox(ToolRegistry({ settings }, memory, labelled)), mcp)),
+            shaper = shaper,
+        )
+        val conv = withContext(Dispatchers.Main) { conversations.first { it.id == convId } }
+        val ctx = contextStateFor(conv)
+        val s = applyTaskModel(settings, t)
+        val latest = java.util.concurrent.atomic.AtomicReference<ChatMessage?>(null)
+        var final: ChatMessage? = null
+        try {
+            if (s.toolsEnabled && mcp.servers.any { it.enabled }) withContext(Dispatchers.IO) { mcp.prepare() }
+            val promptText = withContext(Dispatchers.IO) { mainPrompt(s) }
+            final = withContext(Dispatchers.IO) {
+                runEngine.runTurn(conv.messages, s, promptText, ctx, object : TurnListener {
+                    override fun onUpdate(message: ChatMessage) { latest.set(message); scope.launch(Dispatchers.Main) { scheduledStreaming[convId] = message } }
+                })
+            }
+        } finally {
+            val msg = final ?: latest.get()
+            withContext(Dispatchers.Main + kotlinx.coroutines.NonCancellable) {
+                mutate(convId, persist = true) {
+                    it.copy(messages = if (msg != null) it.messages + msg else it.messages, updatedAt = System.currentTimeMillis(),
+                        compactMarkers = ctx.markers.toList(), contextRatios = ctx.ratios.toMap())
+                }
+                scheduledStreaming.remove(convId); scheduledRunning.remove(convId); scheduledTaskOfConv.remove(convId)
+            }
+        }
+        val text = final?.let { com.openminis.desktop.subagents.SubAgentProtocol.finalText(it) }.orEmpty()
+        val err = final?.error
+        return com.openminis.desktop.scheduled.ScheduledOutcome(convId, err?.let { "Error: $it" } ?: text.ifBlank { "(no reply)" }, ok = err == null, result = text)
+    }
+
+    /** Stop a running scheduled task (its chat keeps what was produced). */
+    fun stopScheduled(convId: String) { scheduledTaskOfConv[convId]?.let(scheduler::cancelRun) }
+    private val scheduledTaskOfConv = java.util.concurrent.ConcurrentHashMap<String, String>()
 
     fun updateSubAgentConfig(c: com.openminis.desktop.subagents.SubAgentConfig) {
         subAgentConfig = c.normalized()
@@ -170,6 +268,8 @@ class AppState(val paths: AppPaths, private val scope: CoroutineScope) {
 
     init {
         mcp.onChange = { scope.launch(Dispatchers.Main) { mcpTick++ } }
+        scheduler.onChange = { scope.launch(Dispatchers.Main) { scheduledTick++ } }
+        scheduler.start()
         Runtime.getRuntime().addShutdownHook(Thread { runCatching { mcp.shutdown() } })
         com.openminis.desktop.net.DesktopHttp.update(settings.network)
         conversations.addAll(store.loadAll())
@@ -270,6 +370,7 @@ class AppState(val paths: AppPaths, private val scope: CoroutineScope) {
         if (trimmed == "/compact") { compactNow(); return true }
         val atts = pending(conv.id)
         if ((trimmed.isEmpty() && atts.isEmpty()) || isRunning) return false
+        if (scheduledRunning.containsKey(conv.id)) { toast = "A scheduled task is running in this chat. Wait for it to finish (or stop it)."; return false }
         val s = settings
         val user = ChatMessage(role = ChatRole.USER, text = trimmed, attachments = atts)
         val title = if (conv.messages.isEmpty()) titleFrom(trimmed.ifEmpty { atts.first().fileName }) else conv.title
@@ -394,11 +495,10 @@ class AppState(val paths: AppPaths, private val scope: CoroutineScope) {
         val p = pendingApproval ?: return
         if (allow && dontAskAgain && (p.request.onAlwaysAllow != null || p.request.toolName == "mcp")) {
             runCatching { p.request.onAlwaysAllow?.invoke() }
-        } else if (allow && dontAskAgain) {
-            updateSettings(
-                if (p.request.toolName == "shell") settings.copy(confirmShellCommands = false)
-                else settings.copy(confirmWritesOutsideWorkspace = false)
-            )
+        } else if (allow && dontAskAgain && p.request.toolName == "shell") {
+            updateSettings(settings.copy(confirmShellCommands = false))
+        } else if (allow && dontAskAgain && p.request.toolName == "file") {
+            updateSettings(settings.copy(confirmWritesOutsideWorkspace = false))
         }
         p.answer.complete(allow)
     }

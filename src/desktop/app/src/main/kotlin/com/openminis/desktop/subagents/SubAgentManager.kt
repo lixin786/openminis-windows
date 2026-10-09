@@ -96,7 +96,7 @@ object SubAgentProtocol {
     const val MAX_MINUTES = 60
     const val NO_DELIVERABLE = "no_deliverable"
     /** Tools a sub agent never gets (upstream: helpers have no long-term memory writes). */
-    val HELPER_EXCLUDED = setOf("memory_write")
+    val HELPER_EXCLUDED = setOf("memory_write", "scheduled_task")
 
     fun parseArgs(o: JSONObject): DelegateArgs {
         val task = o.optString("task", "").trim()

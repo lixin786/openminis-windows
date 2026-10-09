@@ -85,6 +85,7 @@ fun main(args: Array<String>) {
                 Menu("File", mnemonic = 'F') {
                     Item("New chat", shortcut = KeyShortcut(Key.N, ctrl = true), onClick = { state.newChat() })
                     Item("Settings…", shortcut = KeyShortcut(Key.Comma, ctrl = true), onClick = { state.showSettings = true })
+                    Item("Scheduled tasks…", onClick = { state.showScheduled = true })
                     Separator()
                     Item("Open workspace folder", onClick = { state.openInExplorer(state.settings.workspace()) })
                     Item("Open data folder", onClick = { state.openInExplorer(paths.root) })

@@ -108,8 +108,8 @@ Status: ✅ done · 🟡 partial · ⬜ not started
 |---|---|---|---|
 | P1-1 | MCP stdio client (`mcp/`) | ✅ | batch2 — see *P1-1 MCP* below. HTTP transport (phone interop) / OAuth: next. |
 | P1-2 | Sub-agents (`agent/jobs`, SubAgentDefinition) | ✅ | batch2 — see *P1-2 Sub agents* below. |
-| P1-3 | Skill import UI (GitHub / zip) + per-conversation skill override | ⬜ | today: folder scan only. |
-| P1-4 | Scheduled tasks via Windows Task Scheduler (`schtasks`), no resident background service | ⬜ | app would be launched headless by the task (`--run-task <id>`). |
+| P1-3 | Skill import UI (GitHub / zip) + per-conversation skill override | ✅ (import) | batch3 — see *P1-3 Skills* below. Per-conversation override moves to the UI batch (with per-session MCP). |
+| P1-4 | Scheduled tasks | ✅ (in-app timer) | batch3 — see *P1-4 Scheduled tasks* below. The planned `schtasks` headless launch (fire while the app is closed) is not done. |
 
 ### P2
 | # | Item | Status | Notes |
@@ -155,6 +155,21 @@ Real-Windows finding after hotfix2: two independent ~3 s killers — the local p
 |---|---|
 | After the HTTP/1.1 downgrade the stream still dies through the proxy (`EOFException`, body bytes=0); nothing tells the user that the proxy is the problem. | `WatchdogListener` now records **every** failed call (`DesktopHttp.StreamFailure`: protocol, route DIRECT / proxy, ms since start / headers, body complete?, origin LOCAL/PEER). When the response headers arrived, then the peer cut the body **through a proxy**, `FallbackChain` shows once per turn: "…cut after its headers while going through HTTP proxy /127.0.0.1:7900 … set Settings → Network → Proxy: Direct, or add <host> to the proxy bypass list", then continues with the normal retry / fallback. Not shown for direct routes, local cancels, HTTP errors, or failures older than the turn. No automatic proxy bypass: going direct can break users who need the proxy to reach the host. |
 | Reset / failure diagnostic was only in the log. | The diagnostic line (and the proxy hint when it applies) is appended to the turn's error text (copyable / reportable), and the HTTP/1.1 downgrade notice carries the reset line too. |
+
+## P1-3 Skills (batch3)
+
+- Settings › Skills: every installed skill with an on/off switch (`AppSettings.disabledSkills`, folder ids; off = kept on disk, left out of the prompt), detail (version, path, description, body), open folder, delete (confirmed; only folders directly under a skills root).
+- Import, ported from upstream `SkillRepository`: pasted SKILL.md (`importFromContent`, replace by slug), `.zip` / `.skill` archive with SKILL.md at the root or one folder deep (`importFromArchive`, siblings extracted, `..` / absolute paths refused and reported, 50 MB cap), GitHub `tree` / `blob` / raw URL → raw SKILL.md + sibling files through the contents API (depth ≤ 5, one retry, partial download reported), any other URL = a direct SKILL.md. Desktop addition: import a local folder (dot-folders such as `.git` skipped). Downloads use the app's proxy settings. All file I/O is explicit UTF-8.
+- A name with no ASCII letters / digits (e.g. Chinese only) gets the folder id `skill-<hash>` (upstream's slug would be empty).
+
+## P1-4 Scheduled tasks (batch3)
+
+- Model: upstream `ScheduledTask` / `PrefilledToolCall` copied verbatim (`com.openminis.app.scheduled`), stored as the same JSON rows in `%APPDATA%\OpenMinis\scheduled_tasks.json`.
+- Triggers: time of day once / daily / weekdays / chosen days with a from / until date, after a delay, every N minutes (optionally N times), when another task finishes (`{{result}}` = its answer). Targets: a new chat each time, or a follow-up in an existing chat. Per-task model (`PROVIDER/model`) and reasoning override. Run records (newest first, 50 kept) with "Open chat".
+- **Deviation from the plan:** an in-process timer (1 s tick, `DesktopScheduler`) instead of Windows Task Scheduler — tasks fire only while OpenMinis is running. Catch-up = upstream's: an overdue after / interval fires once at start; a time-of-day slot missed while the app was closed is skipped. "Run now" does not count toward `--count`. A fire while the same task is still running is skipped.
+- A run writes into its chat like a normal turn (live reply visible when that chat is open, "Stop" in the chat); the user's own send in that chat waits. Its shell / file / MCP approvals use the normal dialog, labelled `Scheduled task «label»: …`.
+- Agent tool `scheduled_task` = upstream `minis-scheduled` (list / create / delete / enable / disable / run, same option names). Desktop safety addition: every *create* asks the user. Not offered to sub agents or inside scheduled runs.
+- Not yet: `rerun` / `child-of-current` targets, prefilled tool calls (`--command` / `--tool`; the field round-trips), completion notifications, firing while the app is closed.
 
 ## P1-1 MCP (batch2)
 
