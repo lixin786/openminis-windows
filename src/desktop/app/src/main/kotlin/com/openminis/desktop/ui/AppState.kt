@@ -323,17 +323,30 @@ class AppState(val paths: AppPaths, private val scope: CoroutineScope) {
 
     fun delete(id: String) {
         if (runningConversationId == id) stop()
+        if (renamingId == id) renamingId = null
         val idx = conversations.indexOfFirst { it.id == id }
         if (idx >= 0) conversations.removeAt(idx)
         pendingAttachments.remove(id)
         scope.launch(Dispatchers.IO) { store.delete(id); attachmentStore.deleteConversation(id) }
         if (selectedId == id) {
-            selectedId = conversations.firstOrNull()?.id
+            selectedId = com.openminis.desktop.core.ConversationSearch.arrange(conversations).firstOrNull()?.id
             if (selectedId == null) newChat()
         }
     }
 
-    fun rename(id: String, title: String) = mutate(id, persist = true) { it.copy(title = title.ifBlank { it.title }) }
+    /** Chat whose sidebar row shows the inline rename field (F2, double-click, or the row menu). */
+    var renamingId by mutableStateOf<String?>(null)
+    /** Bumped to move focus into the sidebar search field (Ctrl+F). */
+    var searchFocusTick by mutableStateOf(0)
+
+    /** Manual rename: cleaned, capped, and locked so the first message does not overwrite it. Blank input keeps the old title. */
+    fun rename(id: String, title: String) {
+        renamingId = null
+        val clean = com.openminis.desktop.core.ConversationSearch.cleanTitle(title) ?: return
+        mutate(id, persist = true) { if (it.title == clean && it.titleLocked) it else it.copy(title = clean, titleLocked = true) }
+    }
+
+    fun togglePin(id: String) = mutate(id, persist = true) { it.copy(pinned = !it.pinned) }
 
     private fun mutate(id: String, persist: Boolean, f: (Conversation) -> Conversation) {
         val idx = conversations.indexOfFirst { it.id == id }
@@ -395,7 +408,7 @@ class AppState(val paths: AppPaths, private val scope: CoroutineScope) {
         if (scheduledRunning.containsKey(conv.id)) { toast = tr("toast.scheduled_busy"); return false }
         val s = settings
         val user = ChatMessage(role = ChatRole.USER, text = trimmed, attachments = atts)
-        val title = if (conv.messages.isEmpty()) titleFrom(trimmed.ifEmpty { atts.first().fileName }) else conv.title
+        val title = titleOnSend(conv, trimmed.ifEmpty { atts.first().fileName })
         pendingAttachments.remove(conv.id)
         mutate(conv.id, persist = true) {
             it.copy(
@@ -557,6 +570,10 @@ class AppState(val paths: AppPaths, private val scope: CoroutineScope) {
     }
 
     companion object {
+        /** The first message titles a chat, unless the user already renamed it. */
+        fun titleOnSend(conv: Conversation, text: String): String =
+            if (conv.messages.isEmpty() && !conv.titleLocked) titleFrom(text) else conv.title
+
         fun titleFrom(text: String): String {
             val line = text.lineSequence().firstOrNull { it.isNotBlank() }?.trim() ?: DEFAULT_CONVERSATION_TITLE
             return if (line.length > 48) line.take(47) + "…" else line

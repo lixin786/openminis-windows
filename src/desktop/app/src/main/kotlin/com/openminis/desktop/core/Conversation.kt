@@ -126,6 +126,10 @@ data class Conversation(
     val compactMarkers: List<CompactMarker> = emptyList(),
     /** Per-model token calibration ratios (upstream ContextSizeMeter): provider-reported ÷ estimated. */
     val contextRatios: Map<String, Double> = emptyMap(),
+    /** Shown in the sidebar's Pinned group, above the recent chats. */
+    val pinned: Boolean = false,
+    /** Set by a manual rename: the first message no longer auto-titles the chat. */
+    val titleLocked: Boolean = false,
 ) {
     val latestMarker: CompactMarker? get() = compactMarkers.lastOrNull()
 }

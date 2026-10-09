@@ -70,6 +70,14 @@ import java.io.File
 import com.openminis.desktop.core.ChatMessage
 import com.openminis.desktop.core.ChatRole
 import com.openminis.desktop.core.Conversation
+import com.openminis.desktop.core.ConversationSearch
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.isSecondaryPressed
+import androidx.compose.ui.input.pointer.onPointerEvent
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import com.openminis.desktop.core.DesktopProviderFactory
 import com.openminis.desktop.core.ProviderKind
 import com.openminis.desktop.core.Round
@@ -168,6 +176,8 @@ fun App(state: AppState) {
 @Composable
 private fun Sidebar(state: AppState, modifier: Modifier) {
     var filter by remember { mutableStateOf("") }
+    val searchFocus = remember { FocusRequester() }
+    LaunchedEffect(state.searchFocusTick) { if (state.searchFocusTick > 0) runCatching { searchFocus.requestFocus() } }
     Column(modifier.background(MaterialTheme.colorScheme.surfaceVariant).padding(10.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("OpenMinis", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
@@ -182,14 +192,32 @@ private fun Sidebar(state: AppState, modifier: Modifier) {
         OutlinedTextField(
             value = filter, onValueChange = { filter = it }, singleLine = true,
             placeholder = { Text(tr("sidebar.search")) }, leadingIcon = { Icon(Icons.Default.Search, null) },
-            modifier = Modifier.fillMaxWidth().tabMovesFocus().semantics { contentDescription = tr("sidebar.search") }, textStyle = MaterialTheme.typography.bodyMedium,
+            trailingIcon = if (filter.isNotEmpty()) {
+                { IconButton(onClick = { filter = "" }) { Icon(Icons.Default.Close, tr("sidebar.search_clear")) } }
+            } else null,
+            modifier = Modifier.fillMaxWidth().tabMovesFocus().focusRequester(searchFocus)
+                .onPreviewKeyEvent { ev -> if (ev.type == KeyEventType.KeyDown && ev.key == Key.Escape && filter.isNotEmpty()) { filter = ""; true } else false }
+                .semantics { contentDescription = tr("sidebar.search") }, textStyle = MaterialTheme.typography.bodyMedium,
         )
         Spacer(Modifier.height(8.dp))
-        val items = state.conversations.filter {
-            filter.isBlank() || it.displayTitle().contains(filter, true) || it.messages.any { m -> m.displayText.contains(filter, true) }
-        }
+        val terms = remember(filter) { ConversationSearch.terms(filter) }
+        val hits = ConversationSearch.search(state.conversations, filter) { it.displayTitle() }
         LazyColumn(Modifier.weight(1f)) {
-            items(items, key = { it.id }) { c -> ConversationRow(state, c) }
+            if (terms.isEmpty()) {
+                val pinned = hits.filter { it.conversation.pinned }
+                if (pinned.isNotEmpty()) {
+                    item(key = "h-pinned") { SidebarHeader(tr("sidebar.pinned")) }
+                    items(pinned, key = { it.conversation.id }) { h -> ConversationRow(state, h.conversation, terms, null) }
+                    item(key = "h-recent") { SidebarHeader(tr("sidebar.recent")) }
+                }
+                items(hits.filterNot { it.conversation.pinned }, key = { it.conversation.id }) { h -> ConversationRow(state, h.conversation, terms, null) }
+            } else {
+                if (hits.isEmpty()) item(key = "none") {
+                    Text(tr("sidebar.no_results"), style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(10.dp))
+                }
+                items(hits, key = { it.conversation.id }) { h -> ConversationRow(state, h.conversation, terms, h.snippet) }
+            }
         }
         Text(
             tr("sidebar.workspace", state.settings.workspace().absolutePath),
@@ -201,30 +229,67 @@ private fun Sidebar(state: AppState, modifier: Modifier) {
 }
 
 @Composable
-private fun ConversationRow(state: AppState, c: Conversation) {
+private fun SidebarHeader(text: String) {
+    Text(text, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold,
+        color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 10.dp, top = 8.dp, bottom = 2.dp))
+}
+
+/** [text] with every search term bolded and tinted. */
+@Composable
+private fun highlighted(text: String, terms: List<String>): AnnotatedString {
+    val ranges = ConversationSearch.matchRanges(text, terms)
+    if (ranges.isEmpty()) return AnnotatedString(text)
+    val style = SpanStyle(fontWeight = FontWeight.Bold, background = MaterialTheme.colorScheme.primary.copy(alpha = 0.22f))
+    return buildAnnotatedString {
+        append(text)
+        ranges.forEach { addStyle(style, it.first, it.last + 1) }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class, ExperimentalComposeUiApi::class)
+@Composable
+private fun ConversationRow(state: AppState, c: Conversation, terms: List<String>, snippet: String?) {
     val selected = c.id == state.selectedId
     val hover = remember { MutableInteractionSource() }
     val hovered by hover.collectIsHoveredAsState()
     var confirmDelete by remember { mutableStateOf(false) }
+    var menuOpen by remember { mutableStateOf(false) }
+    val renaming = state.renamingId == c.id
     Row(
         Modifier.fillMaxWidth().padding(vertical = 2.dp).clip(RoundedCornerShape(8.dp))
             .background(if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f) else androidx.compose.ui.graphics.Color.Transparent)
             .hoverable(hover)
-            .clickable { state.select(c.id) }
+            .onPointerEvent(PointerEventType.Press) { ev -> if (ev.buttons.isSecondaryPressed) { state.select(c.id); menuOpen = true } }
+            .combinedClickable(onClick = { state.select(c.id) }, onDoubleClick = { state.select(c.id); state.renamingId = c.id })
             .padding(horizontal = 10.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {
-            Text(c.displayTitle(), maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium,
-                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal)
+            if (renaming) RenameField(state, c)
+            else Row(verticalAlignment = Alignment.CenterVertically) {
+                if (c.pinned) Icon(Icons.Default.PushPin, tr("sidebar.pinned"), Modifier.size(14.dp).padding(end = 2.dp), tint = MaterialTheme.colorScheme.primary)
+                Text(highlighted(c.displayTitle(), terms), maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal)
+            }
+            if (snippet != null) Text(highlighted(snippet, terms), maxLines = 2, overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text(
                 (if (state.runningConversationId == c.id) tr("sidebar.running_prefix") else "") + SimpleDateFormat("MM-dd HH:mm").format(Date(c.updatedAt)),
                 style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        if (hovered || selected) {
-            IconButton(onClick = { confirmDelete = true }, modifier = Modifier.size(28.dp)) {
-                Icon(Icons.Default.DeleteOutline, tr("common.delete"), modifier = Modifier.size(18.dp))
+        if ((hovered || selected || menuOpen) && !renaming) Box {
+            IconButton(onClick = { menuOpen = true }, modifier = Modifier.size(28.dp)) {
+                Icon(Icons.Default.MoreVert, tr("chat.more"), modifier = Modifier.size(18.dp))
+            }
+            DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                DropdownMenuItem(text = { Text(tr("chat.rename")) }, leadingIcon = { Icon(Icons.Default.Edit, null) },
+                    trailingIcon = { Text("F2", style = MaterialTheme.typography.labelSmall) },
+                    onClick = { menuOpen = false; state.renamingId = c.id })
+                DropdownMenuItem(text = { Text(tr(if (c.pinned) "chat.unpin" else "chat.pin")) }, leadingIcon = { Icon(Icons.Default.PushPin, null) },
+                    onClick = { menuOpen = false; state.togglePin(c.id) })
+                DropdownMenuItem(text = { Text(tr("common.delete")) }, leadingIcon = { Icon(Icons.Default.DeleteOutline, null) },
+                    onClick = { menuOpen = false; confirmDelete = true })
             }
         }
     }
@@ -237,6 +302,37 @@ private fun ConversationRow(state: AppState, c: Conversation) {
             dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text(tr("common.cancel")) } },
         )
     }
+}
+
+/** Inline rename: Enter saves, Esc cancels, leaving the field saves. Starts with the whole title selected. */
+@Composable
+private fun RenameField(state: AppState, c: Conversation) {
+    val initial = c.displayTitle()
+    var value by remember(c.id) { mutableStateOf(TextFieldValue(initial, TextRange(0, initial.length))) }
+    val focus = remember { FocusRequester() }
+    var hadFocus by remember { mutableStateOf(false) }
+    var done by remember { mutableStateOf(false) }
+    fun commit() { if (!done) { done = true; state.rename(c.id, value.text) } }
+    fun cancel() { if (!done) { done = true; state.renamingId = null } }
+    LaunchedEffect(c.id) { runCatching { focus.requestFocus() } }
+    androidx.compose.foundation.text.BasicTextField(
+        value = value, onValueChange = { value = it }, singleLine = true,
+        textStyle = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurface),
+        cursorBrush = androidx.compose.ui.graphics.SolidColor(MaterialTheme.colorScheme.primary),
+        modifier = Modifier.fillMaxWidth().focusRequester(focus)
+            .border(1.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(4.dp)).padding(horizontal = 4.dp, vertical = 2.dp)
+            .onFocusChanged { f -> if (f.isFocused) hadFocus = true else if (hadFocus) commit() }
+            .onPreviewKeyEvent { ev ->
+                if (ev.type != KeyEventType.KeyDown) false
+                else when (ev.key) {
+                    Key.Enter, Key.NumPadEnter -> { commit(); true }
+                    Key.Escape -> { cancel(); true }
+                    else -> false
+                }
+            }
+            .semantics { contentDescription = tr("chat.rename") },
+    )
+    Text(tr("chat.rename.hint"), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 }
 
 // ---------------------------------------------------------------- Chat pane

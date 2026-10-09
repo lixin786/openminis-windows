@@ -190,6 +190,13 @@ symlink 不得逃逸（`~/link -> /tmp` 这类）；目标不存在时解析最�
 - 所以根治：description / vendor / copyright 改为纯 ASCII（copyright 的破折号改成 `-`）；`packageMsi/packageExe/createDistributable` 之前会先跑 `requireAsciiPackagingMetadata`，元数据再出现非 ASCII 会直接报清楚的错。
 - 仍需注意：项目路径本身含中文（如 `C:\Users\张三\...`）也会进 @args 文件，建议放在纯英文路径下打包。
 
+### UI 升级 batch7：会话管理
+
+- 重命名：F2、双击会话或行菜单“重命名”，在侧栏内联编辑；Enter 保存、Esc 取消、失焦保存。手动重命名后，首条消息不会再自动改标题（`titleLocked`）。
+- 置顶：行菜单或“对话”菜单置顶/取消置顶；侧栏分“已置顶 / 最近”两组，组内仍按最近活动排序。
+- 搜索增强：Ctrl+F 聚焦；空格分隔多词 AND、大小写不敏感；标题命中排前，正文命中显示摘录并高亮；Esc 或 × 清空。
+- 右键会话行弹出同一菜单。旧会话 JSON 无新字段时按未置顶、未锁定读取。
+
 ## 构建
 
 ```bash

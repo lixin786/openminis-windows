@@ -107,6 +107,10 @@ fun main(args: Array<String>) {
                         val chooser = javax.swing.JFileChooser().apply { isMultiSelectionEnabled = true; dialogTitle = tr("attach.dialog_title") }
                         if (chooser.showOpenDialog(window) == javax.swing.JFileChooser.APPROVE_OPTION) state.attachFiles(chooser.selectedFiles.toList())
                     })
+                    Item(tr("menu.rename_chat"), shortcut = KeyShortcut(Key.F2), enabled = state.selectedId != null, onClick = { state.renamingId = state.selectedId })
+                    Item(tr(if (state.selected?.pinned == true) "menu.unpin_chat" else "menu.pin_chat"), enabled = state.selectedId != null,
+                        onClick = { state.selectedId?.let(state::togglePin) })
+                    Item(tr("menu.search_chats"), shortcut = KeyShortcut(Key.F, ctrl = true), onClick = { state.searchFocusTick++ })
                     Item(tr("menu.delete_chat"), onClick = { state.selectedId?.let(state::delete) })
                 }
             }
