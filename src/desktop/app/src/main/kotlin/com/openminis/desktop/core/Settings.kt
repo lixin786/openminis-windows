@@ -63,6 +63,8 @@ data class AppSettings(
     val memoryEnabled: Boolean = true,
     val skillsEnabled: Boolean = true,
     val darkTheme: Boolean? = null,
+    /** UI language: "system" (follow Windows), "en", "zh-CN", "zh-TW" — see i18n/AppLanguage. */
+    val language: String = "system",
     /**
      * Ordered fallback chain tried after the active provider/model (upstream ModelGroup with
      * RoutingStrategy.fallback). Each entry uses that provider's credentials from [providers].

@@ -8,6 +8,8 @@
 // Copyright (C) OpenMinis contributors. Licensed under the GNU GPL v3 (see LICENSE).
 package com.openminis.desktop.security
 
+import com.openminis.desktop.i18n.tr
+
 import java.io.File
 
 object McpTrustPolicy {
@@ -57,20 +59,20 @@ object McpTrustPolicy {
      */
     fun verdict(command: String, isWindows: Boolean, probe: Probe? = null): Verdict {
         val cmd = command.trim().trim('"', '\'')
-        if (cmd.isEmpty()) return Verdict(false, "no command")
-        if (CommandGuard.hasMetacharacters(cmd)) return Verdict(false, "the command contains shell metacharacters")
+        if (cmd.isEmpty()) return Verdict(false, tr("mcp.trust.no_command"))
+        if (CommandGuard.hasMetacharacters(cmd)) return Verdict(false, tr("mcp.trust.metachar"))
         nameVerdict(cmd, isWindows)?.let { return it }
         val file = probe?.resolve(cmd)
         if (file != null) {
             val real = runCatching { file.toPath().toRealPath().toFile() }.getOrDefault(file)
-            if (real.name != File(cmd).name) nameVerdict(real.path, isWindows)?.let { return Verdict(false, "${it.reason} (resolved to ${real.path})") }
+            if (real.name != File(cmd).name) nameVerdict(real.path, isWindows)?.let { return Verdict(false, tr("mcp.trust.resolved", it.reason, real.path)) }
             val head = probe.head(real, 2)
             if (head.size == 2 && head[0] == '#'.code.toByte() && head[1] == '!'.code.toByte())
-                return Verdict(false, "${real.name} is a #! script run by an interpreter")
+                return Verdict(false, tr("mcp.trust.shebang", real.name))
             if (isWindows && head.size == 2 && !(head[0] == 'M'.code.toByte() && head[1] == 'Z'.code.toByte()))
-                return Verdict(false, "${real.name} is not a native Windows executable")
+                return Verdict(false, tr("mcp.trust.not_pe", real.name))
         }
-        return Verdict(true, "direct executable")
+        return Verdict(true, tr("mcp.trust.direct"))
     }
 
     fun isPersistable(command: String, isWindows: Boolean, probe: Probe? = null): Boolean = verdict(command, isWindows, probe).persistable
@@ -82,10 +84,10 @@ object McpTrustPolicy {
         // python3.12, node22, pwsh-preview, python3.12.exe → python / node / pwsh
         val stem = base.replace(Regex("(-preview|-nightly|-dev)$"), "").replace(Regex("[0-9][0-9.]*$"), "").trimEnd('.', '-', '_')
         if (CommandGuard.isInterpreterName(base) || CommandGuard.isInterpreterName(stem))
-            return Verdict(false, "$fileName is an interpreter")
-        if (base in LAUNCHERS || stem in LAUNCHERS) return Verdict(false, "$fileName runs packages or scripts that are not on the command line")
-        if (ext in SCRIPT_EXTENSIONS) return Verdict(false, "$fileName is a script (.$ext)")
-        if (isWindows && ext !in WINDOWS_NATIVE) return Verdict(false, "$fileName has no .exe/.com extension, so it starts through cmd.exe /c")
+            return Verdict(false, tr("mcp.trust.interpreter", fileName))
+        if (base in LAUNCHERS || stem in LAUNCHERS) return Verdict(false, tr("mcp.trust.launcher", fileName))
+        if (ext in SCRIPT_EXTENSIONS) return Verdict(false, tr("mcp.trust.script", fileName, ext))
+        if (isWindows && ext !in WINDOWS_NATIVE) return Verdict(false, tr("mcp.trust.no_exe", fileName))
         return null
     }
 

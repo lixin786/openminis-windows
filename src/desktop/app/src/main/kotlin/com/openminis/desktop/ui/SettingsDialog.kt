@@ -2,6 +2,10 @@
 // Copyright (C) OpenMinis contributors. Licensed under the GNU GPL v3 (see LICENSE).
 package com.openminis.desktop.ui
 
+import com.openminis.desktop.i18n.AppLanguage
+import com.openminis.desktop.i18n.I18n
+import com.openminis.desktop.i18n.tr
+
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -43,7 +47,7 @@ fun SettingsDialog(state: AppState, onClose: () -> Unit) {
     var mcpDraft by remember { mutableStateOf(state.mcp.servers) }
     val save = { state.updateSettings(draft); state.updateSubAgentConfig(subDraft); if (mcpDraft != state.mcp.servers) state.updateMcpServers(mcpDraft); onClose() }
     DialogWindow(
-        onCloseRequest = onClose, title = "OpenMinis Settings",
+        onCloseRequest = onClose, title = tr("settings.title"),
         state = rememberFittedDialogState(720.dp, 820.dp), resizable = true,
         // Esc closes without saving; Ctrl+S / Ctrl+Enter saves.
         onPreviewKeyEvent = { ev ->
@@ -59,57 +63,66 @@ fun SettingsDialog(state: AppState, onClose: () -> Unit) {
             Surface(Modifier.fillMaxSize()) {
                 Column(Modifier.fillMaxSize()) {
                     ScrollColumn(Modifier.weight(1f).fillMaxWidth()) {
-                        Section("Model provider")
+                        Section(tr("settings.language"))
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("Active provider:", Modifier.width(140.dp))
+                            Text(tr("settings.language.label"), Modifier.width(140.dp))
+                            Dropdown(AppLanguage.of(draft.language), AppLanguage.entries,
+                                { if (it == AppLanguage.SYSTEM) tr("settings.language.system", AppLanguage.of(I18n.resolve("system")).nativeName) else it.nativeName },
+                                { draft = draft.copy(language = it.code) })
+                        }
+                        Hint(tr("settings.language.hint"))
+
+                        Section(tr("settings.provider"))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(tr("settings.active_provider"), Modifier.width(140.dp))
                             Dropdown(draft.activeProvider, ProviderKind.entries, { it.label }, { draft = draft.copy(activeProvider = it); editing = it })
                         }
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("Edit credentials for:", Modifier.width(140.dp))
+                            Text(tr("settings.edit_for"), Modifier.width(140.dp))
                             Dropdown(editing, ProviderKind.entries, { k -> k.label + if (draft.provider(k).apiKey.isNotBlank()) "  ✓" else "" }, { editing = it })
                         }
                         val ps = draft.provider(editing)
                         var showKey by remember(editing) { mutableStateOf(false) }
                         OutlinedTextField(
                             value = ps.apiKey, onValueChange = { draft = draft.withProvider(editing, ps.copy(apiKey = it.trim())) },
-                            label = { Text("API key") }, singleLine = true, modifier = Modifier.fillMaxWidth().tabMovesFocus(),
+                            label = { Text(tr("settings.api_key")) }, singleLine = true, modifier = Modifier.fillMaxWidth().tabMovesFocus(),
                             visualTransformation = if (showKey) VisualTransformation.None else PasswordVisualTransformation(),
                             trailingIcon = {
                                 IconButton(onClick = { showKey = !showKey }) {
-                                    Icon(if (showKey) Icons.Default.VisibilityOff else Icons.Default.Visibility, "Show/hide")
+                                    Icon(if (showKey) Icons.Default.VisibilityOff else Icons.Default.Visibility, tr("settings.show_hide"))
                                 }
                             },
                         )
                         OutlinedTextField(
                             value = ps.baseUrl, onValueChange = { draft = draft.withProvider(editing, ps.copy(baseUrl = it)) },
-                            label = { Text("Base URL (blank = ${editing.defaultBaseUrl})") }, singleLine = true, modifier = Modifier.fillMaxWidth().tabMovesFocus(),
+                            label = { Text(tr("settings.base_url", editing.defaultBaseUrl)) }, singleLine = true, modifier = Modifier.fillMaxWidth().tabMovesFocus(),
                         )
                         OutlinedTextField(
                             value = ps.model, onValueChange = { draft = draft.withProvider(editing, ps.copy(model = it)) },
-                            label = { Text("Model id (blank = ${editing.defaultModel})") }, singleLine = true, modifier = Modifier.fillMaxWidth().tabMovesFocus(),
-                            supportingText = { Text("Suggestions: " + DesktopProviderFactory.suggestedModels(editing).take(6).joinToString(", ")) },
+                            label = { Text(tr("settings.model_id", editing.defaultModel)) }, singleLine = true, modifier = Modifier.fillMaxWidth().tabMovesFocus(),
+                            supportingText = { Text(tr("settings.suggestions", DesktopProviderFactory.suggestedModels(editing).take(6).joinToString(", "))) },
                         )
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("Image input:", Modifier.width(140.dp))
+                            Text(tr("settings.image_input"), Modifier.width(140.dp))
                             Dropdown(
                                 ps.imageInput, listOf(null, true, false),
-                                { when (it) { null -> "Auto (catalog / provider default)"; true -> "On — model accepts images"; false -> "Off — send a text placeholder" } },
+                                { when (it) { null -> tr("settings.image.auto"); true -> tr("settings.image.on"); false -> tr("settings.image.off") } },
                                 { draft = draft.withProvider(editing, ps.copy(imageInput = it)) },
                             )
                         }
-                        Hint("Keys are stored in plain text in ${state.paths.settingsFile.absolutePath} (inside your user profile).")
+                        Hint(tr("settings.keys_plain", state.paths.settingsFile.absolutePath))
 
-                        Section("Fallback models")
-                        Hint("When the active model fails with a retryable error (429 rate limit, 5xx / overloaded, network error after 3 retries) the turn moves to the next model below, in order. Each entry uses that provider's API key above.")
+                        Section(tr("settings.fallback"))
+                        Hint(tr("settings.fallback.hint"))
                         val chain = draft.fallbackModels
-                        Text("0.  ${draft.primaryModel().label}  (active model)", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(vertical = 4.dp))
+                        Text(tr("settings.fallback.active", draft.primaryModel().label), style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(vertical = 4.dp))
                         chain.forEachIndexed { i, ref ->
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text("${i + 1}.  ${ref.label}" + if (draft.provider(ref.provider).apiKey.isBlank() && ref.provider != ProviderKind.OPENAI_COMPATIBLE) "  (no API key — will be skipped)" else "",
+                                Text("${i + 1}.  ${ref.label}" + if (draft.provider(ref.provider).apiKey.isBlank() && ref.provider != ProviderKind.OPENAI_COMPATIBLE) tr("settings.fallback.no_key") else "",
                                     Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
-                                IconButton(onClick = { draft = draft.copy(fallbackModels = chain.toMutableList().also { l -> java.util.Collections.swap(l, i, i - 1) }) }, enabled = i > 0) { Icon(Icons.Default.ArrowUpward, "Move up") }
-                                IconButton(onClick = { draft = draft.copy(fallbackModels = chain.toMutableList().also { l -> java.util.Collections.swap(l, i, i + 1) }) }, enabled = i < chain.lastIndex) { Icon(Icons.Default.ArrowDownward, "Move down") }
-                                IconButton(onClick = { draft = draft.copy(fallbackModels = chain.filterIndexed { j, _ -> j != i }) }) { Icon(Icons.Default.Delete, "Remove") }
+                                IconButton(onClick = { draft = draft.copy(fallbackModels = chain.toMutableList().also { l -> java.util.Collections.swap(l, i, i - 1) }) }, enabled = i > 0) { Icon(Icons.Default.ArrowUpward, tr("common.move_up")) }
+                                IconButton(onClick = { draft = draft.copy(fallbackModels = chain.toMutableList().also { l -> java.util.Collections.swap(l, i, i + 1) }) }, enabled = i < chain.lastIndex) { Icon(Icons.Default.ArrowDownward, tr("common.move_down")) }
+                                IconButton(onClick = { draft = draft.copy(fallbackModels = chain.filterIndexed { j, _ -> j != i }) }) { Icon(Icons.Default.Delete, tr("common.remove")) }
                             }
                         }
                         var addKind by remember { mutableStateOf(ProviderKind.OPENAI) }
@@ -118,99 +131,99 @@ fun SettingsDialog(state: AppState, onClose: () -> Unit) {
                             Dropdown(addKind, ProviderKind.entries, { it.label }, { addKind = it; addModel = "" })
                             OutlinedTextField(
                                 value = addModel, onValueChange = { addModel = it }, singleLine = true, modifier = Modifier.weight(1f).tabMovesFocus(),
-                                label = { Text("Model id (blank = ${draft.provider(addKind).effectiveModel(addKind)})") },
+                                label = { Text(tr("settings.model_id", draft.provider(addKind).effectiveModel(addKind))) },
                             )
                             Spacer(Modifier.width(8.dp))
                             OutlinedButton(onClick = {
                                 val ref = com.openminis.desktop.core.ModelRef(addKind, addModel.trim().ifBlank { draft.provider(addKind).effectiveModel(addKind) })
                                 if (ref !in chain) draft = draft.copy(fallbackModels = chain + ref)
                                 addModel = ""
-                            }) { Text("Add") }
+                            }) { Text(tr("common.add")) }
                         }
-                        Hint("Suggestions: " + DesktopProviderFactory.suggestedModels(addKind).take(5).joinToString(", "))
-                        Toggle("Fall back on any error (not only retryable ones)", draft.fallbackOnAnyError) { draft = draft.copy(fallbackOnAnyError = it) }
+                        Hint(tr("settings.suggestions", DesktopProviderFactory.suggestedModels(addKind).take(5).joinToString(", ")))
+                        Toggle(tr("settings.fallback.any_error"), draft.fallbackOnAnyError) { draft = draft.copy(fallbackOnAnyError = it) }
 
-                        Section("Network")
+                        Section(tr("settings.network"))
                         NetworkSection(draft.network) { draft = draft.copy(network = it) }
 
-                        Section("Context & compaction")
-                        Toggle("Compact automatically when the conversation nears the context window", draft.autoCompact) { draft = draft.copy(autoCompact = it) }
-                        NumberField("Context window override in tokens (0 = auto from the model catalog)", draft.contextWindowOverride, Modifier.fillMaxWidth()) {
+                        Section(tr("settings.context"))
+                        Toggle(tr("settings.auto_compact"), draft.autoCompact) { draft = draft.copy(autoCompact = it) }
+                        NumberField(tr("settings.ctx_override"), draft.contextWindowOverride, Modifier.fillMaxWidth()) {
                             draft = draft.copy(contextWindowOverride = it.coerceIn(0, 10_000_000))
                         }
-                        NumberField("Inline text attachments up to N characters", draft.maxInlineTextChars, Modifier.fillMaxWidth()) {
+                        NumberField(tr("settings.inline_chars"), draft.maxInlineTextChars, Modifier.fillMaxWidth()) {
                             draft = draft.copy(maxInlineTextChars = it.coerceIn(1000, 2_000_000))
                         }
-                        Hint("Manual compaction: the Compact button in the chat toolbar, Chat → Compact context, or type /compact.")
+                        Hint(tr("settings.manual_compact"))
 
-                        Section("Agent")
+                        Section(tr("settings.agent"))
                         OutlinedTextField(
                             value = draft.systemPrompt, onValueChange = { draft = draft.copy(systemPrompt = it) },
-                            label = { Text("Custom instructions (appended to the system prompt)") },
+                            label = { Text(tr("settings.custom_instructions")) },
                             modifier = Modifier.fillMaxWidth().heightIn(min = 90.dp).tabMovesFocus(), maxLines = 8,
                         )
                         Row {
-                            NumberField("Max output tokens", draft.maxOutputTokens, Modifier.weight(1f)) { draft = draft.copy(maxOutputTokens = it.coerceIn(256, 200_000)) }
+                            NumberField(tr("settings.max_output"), draft.maxOutputTokens, Modifier.weight(1f)) { draft = draft.copy(maxOutputTokens = it.coerceIn(256, 200_000)) }
                             Spacer(Modifier.width(12.dp))
-                            NumberField("Max tool rounds per turn", draft.maxToolRounds, Modifier.weight(1f)) { draft = draft.copy(maxToolRounds = it.coerceIn(1, 500)) }
+                            NumberField(tr("settings.max_rounds"), draft.maxToolRounds, Modifier.weight(1f)) { draft = draft.copy(maxToolRounds = it.coerceIn(1, 500)) }
                         }
-                        Toggle("Dark theme (unset = follow system)", draft.darkTheme ?: false) { draft = draft.copy(darkTheme = it) }
+                        Toggle(tr("settings.dark"), draft.darkTheme ?: false) { draft = draft.copy(darkTheme = it) }
 
-                        Section("Tools & shell")
-                        Toggle("Enable tools (shell, files, memory)", draft.toolsEnabled) { draft = draft.copy(toolsEnabled = it) }
-                        Toggle("Ask before running every shell command", draft.confirmShellCommands) { draft = draft.copy(confirmShellCommands = it) }
-                        Toggle("Run read-only commands without asking (ls, cat, dir, Get-ChildItem … with no operators, inside the workspace)", draft.autoApproveReadOnlyShell) { draft = draft.copy(autoApproveReadOnlyShell = it) }
-                        Hint("Always enforced: destructive commands (rm -rf /, format C:, Remove-Item -Recurse C:\\ …) are refused outright; commands with > < | ; & ` \$( ) or that start an interpreter always ask, even with the switch above off; file tools only work inside the workspace. \"Allow for this session\" is never saved.")
+                        Section(tr("settings.tools"))
+                        Toggle(tr("settings.tools_enable"), draft.toolsEnabled) { draft = draft.copy(toolsEnabled = it) }
+                        Toggle(tr("settings.confirm_shell"), draft.confirmShellCommands) { draft = draft.copy(confirmShellCommands = it) }
+                        Toggle(tr("settings.readonly_auto"), draft.autoApproveReadOnlyShell) { draft = draft.copy(autoApproveReadOnlyShell = it) }
+                        Hint(tr("settings.security_hint"))
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("Shell:", Modifier.width(140.dp))
+                            Text(tr("settings.shell"), Modifier.width(140.dp))
                             Dropdown(
                                 draft.shell, ShellKind.entries,
-                                { it.label + if (it == ShellKind.WSL && !ShellRunner.wslAvailable) " (not detected)" else "" },
+                                { I18n.trOr("shell.${it.name}", it.label) + if (it == ShellKind.WSL && !ShellRunner.wslAvailable) tr("settings.not_detected") else "" },
                                 { draft = draft.copy(shell = it) },
                             )
                         }
-                        if (!AppPaths.isWindows) Hint("Not running on Windows: commands use /bin/bash (development fallback).")
-                        NumberField("Shell timeout (seconds)", draft.shellTimeoutSeconds, Modifier.fillMaxWidth()) { draft = draft.copy(shellTimeoutSeconds = it.coerceIn(1, 1800)) }
+                        if (!AppPaths.isWindows) Hint(tr("settings.not_windows"))
+                        NumberField(tr("settings.shell_timeout"), draft.shellTimeoutSeconds, Modifier.fillMaxWidth()) { draft = draft.copy(shellTimeoutSeconds = it.coerceIn(1, 1800)) }
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             OutlinedTextField(
                                 value = draft.workspaceDir, onValueChange = { draft = draft.copy(workspaceDir = it) },
-                                label = { Text("Workspace folder (blank = ${AppPaths.defaultWorkspace().absolutePath})") },
+                                label = { Text(tr("settings.workspace", AppPaths.defaultWorkspace().absolutePath)) },
                                 singleLine = true, modifier = Modifier.weight(1f).tabMovesFocus(),
                             )
                             Spacer(Modifier.width(8.dp))
                             OutlinedButton(onClick = {
                                 val chooser = JFileChooser(draft.workspace()).apply { fileSelectionMode = JFileChooser.DIRECTORIES_ONLY }
                                 if (chooser.showOpenDialog(null) == JFileChooser.APPROVE_OPTION) draft = draft.copy(workspaceDir = chooser.selectedFile.absolutePath)
-                            }) { Text("Browse…") }
+                            }) { Text(tr("settings.browse")) }
                         }
 
-                        Section("MCP servers")
+                        Section(tr("settings.mcp"))
                         McpSection(state, mcpDraft) { mcpDraft = it }
 
-                        Section("Sub agents")
+                        Section(tr("settings.subagents"))
                         SubAgentSection(subDraft, draft, state.toolNames()) { subDraft = it }
 
-                        Section("Memory")
-                        Toggle("Enable memory (memory_write / memory_get + prompt context)", draft.memoryEnabled) { draft = draft.copy(memoryEnabled = it) }
+                        Section(tr("settings.memory"))
+                        Toggle(tr("settings.memory_enable"), draft.memoryEnabled) { draft = draft.copy(memoryEnabled = it) }
                         Row {
-                            OutlinedButton(onClick = { state.openFile(state.memory.globalFile, "# GLOBAL memory\n\nFacts and preferences the agent should always know.\n") }) { Text("Edit GLOBAL.md") }
+                            OutlinedButton(onClick = { state.openFile(state.memory.globalFile, "# GLOBAL memory\n\nFacts and preferences the agent should always know.\n") }) { Text(tr("settings.edit_global")) }
                             Spacer(Modifier.width(8.dp))
-                            OutlinedButton(onClick = { state.openInExplorer(state.memory.dir) }) { Text("Open memory folder") }
+                            OutlinedButton(onClick = { state.openInExplorer(state.memory.dir) }) { Text(tr("settings.open_memory")) }
                         }
 
-                        Section("Skills")
-                        Toggle("Enable skills (SKILL.md folders)", draft.skillsEnabled) { draft = draft.copy(skillsEnabled = it) }
+                        Section(tr("settings.skills"))
+                        Toggle(tr("settings.skills_enable"), draft.skillsEnabled) { draft = draft.copy(skillsEnabled = it) }
                         SkillsSection(state, draft.disabledSkills) { draft = draft.copy(disabledSkills = it) }
 
-                        Section("Data")
-                        Hint("App data: ${state.paths.root.absolutePath}")
-                        OutlinedButton(onClick = { state.openInExplorer(state.paths.root) }) { Text("Open data folder") }
+                        Section(tr("settings.data"))
+                        Hint(tr("settings.app_data", state.paths.root.absolutePath))
+                        OutlinedButton(onClick = { state.openInExplorer(state.paths.root) }) { Text(tr("menu.open_data")) }
                     }
                     HorizontalDivider()
                     Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.End) {
-                        TextButton(onClick = onClose) { Text("Cancel (Esc)") }
+                        TextButton(onClick = onClose) { Text(tr("common.cancel_esc")) }
                         Spacer(Modifier.width(8.dp))
-                        Button(onClick = { save() }) { Text("Save (Ctrl+S)") }
+                        Button(onClick = { save() }) { Text(tr("settings.save")) }
                     }
                 }
             }
@@ -238,43 +251,43 @@ fun SettingsDialog(state: AppState, onClose: () -> Unit) {
 
 @Composable private fun NetworkSection(n: com.openminis.desktop.net.NetworkSettings, onChange: (com.openminis.desktop.net.NetworkSettings) -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Text("Proxy:", Modifier.width(140.dp))
-        Dropdown(n.proxyMode, com.openminis.desktop.net.ProxyMode.entries, { it.label }, { onChange(n.copy(proxyMode = it)) })
+        Text(tr("net.proxy"), Modifier.width(140.dp))
+        Dropdown(n.proxyMode, com.openminis.desktop.net.ProxyMode.entries, { I18n.trOr("net.mode.${it.name}", it.label) }, { onChange(n.copy(proxyMode = it)) })
     }
     when (n.proxyMode) {
-        com.openminis.desktop.net.ProxyMode.SYSTEM -> Hint("Uses HTTPS_PROXY / HTTP_PROXY / ALL_PROXY / NO_PROXY when set, otherwise the Windows proxy settings (Settings → Network & Internet → Proxy, including a PAC script / auto-detect where the JDK supports it).")
-        com.openminis.desktop.net.ProxyMode.NONE -> Hint("All connections go direct.")
+        com.openminis.desktop.net.ProxyMode.SYSTEM -> Hint(tr("net.hint.system"))
+        com.openminis.desktop.net.ProxyMode.NONE -> Hint(tr("net.hint.none"))
         com.openminis.desktop.net.ProxyMode.MANUAL -> {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Type:", Modifier.width(140.dp))
+                Text(tr("net.type"), Modifier.width(140.dp))
                 Dropdown(n.proxyType, com.openminis.desktop.net.ProxyType.entries, { if (it == com.openminis.desktop.net.ProxyType.HTTP) "HTTP / HTTPS (CONNECT)" else "SOCKS5" }, { onChange(n.copy(proxyType = it)) })
             }
             Row {
-                OutlinedTextField(n.proxyHost, { onChange(n.copy(proxyHost = it.trim())) }, label = { Text("Host (e.g. 127.0.0.1)") }, singleLine = true, modifier = Modifier.weight(1f).tabMovesFocus())
+                OutlinedTextField(n.proxyHost, { onChange(n.copy(proxyHost = it.trim())) }, label = { Text(tr("net.host")) }, singleLine = true, modifier = Modifier.weight(1f).tabMovesFocus())
                 Spacer(Modifier.width(8.dp))
-                NumberField("Port", n.proxyPort, Modifier.width(120.dp)) { onChange(n.copy(proxyPort = it.coerceIn(0, 65535))) }
+                NumberField(tr("net.port"), n.proxyPort, Modifier.width(120.dp)) { onChange(n.copy(proxyPort = it.coerceIn(0, 65535))) }
             }
             Row {
-                OutlinedTextField(n.proxyUser, { onChange(n.copy(proxyUser = it)) }, label = { Text("User (optional)") }, singleLine = true, modifier = Modifier.weight(1f).tabMovesFocus())
+                OutlinedTextField(n.proxyUser, { onChange(n.copy(proxyUser = it)) }, label = { Text(tr("net.user")) }, singleLine = true, modifier = Modifier.weight(1f).tabMovesFocus())
                 Spacer(Modifier.width(8.dp))
-                OutlinedTextField(n.proxyPassword, { onChange(n.copy(proxyPassword = it)) }, label = { Text("Password") }, singleLine = true,
+                OutlinedTextField(n.proxyPassword, { onChange(n.copy(proxyPassword = it)) }, label = { Text(tr("net.password")) }, singleLine = true,
                     visualTransformation = PasswordVisualTransformation(), modifier = Modifier.weight(1f).tabMovesFocus())
             }
-            OutlinedTextField(n.bypass, { onChange(n.copy(bypass = it)) }, label = { Text("Bypass (no proxy) for: ; separated, *.example.com, 10.*, <local>") },
+            OutlinedTextField(n.bypass, { onChange(n.copy(bypass = it)) }, label = { Text(tr("net.bypass")) },
                 singleLine = true, modifier = Modifier.fillMaxWidth().tabMovesFocus())
         }
     }
     // [hotfix2] no clamp per keystroke: clamping "20" → "2" → 3 while the user edits used to leave a
     // 3-second watchdog behind. The watchdog clamps (and treats < 3 as the 20 s default) when it arms.
-    NumberField("Connect + TLS handshake timeout (seconds, 3–300)", n.connectTimeoutSeconds, Modifier.fillMaxWidth()) { onChange(n.copy(connectTimeoutSeconds = it)) }
-    Hint("A connection that has not finished its TLS handshake within this time is aborted and reported (then retried / handed to a fallback model).")
+    NumberField(tr("net.connect_timeout"), n.connectTimeoutSeconds, Modifier.fillMaxWidth()) { onChange(n.copy(connectTimeoutSeconds = it)) }
+    Hint(tr("net.connect_timeout.hint"))
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Text("HTTP protocol:", Modifier.width(140.dp))
-        Dropdown(n.httpProtocol, com.openminis.desktop.net.HttpProtocolMode.entries, { it.label }, { onChange(n.copy(httpProtocol = it)) })
+        Text(tr("net.http"), Modifier.width(140.dp))
+        Dropdown(n.httpProtocol, com.openminis.desktop.net.HttpProtocolMode.entries, { I18n.trOr("net.http.${it.name}", it.label) }, { onChange(n.copy(httpProtocol = it)) })
     }
     Hint(when (n.httpProtocol) {
-        com.openminis.desktop.net.HttpProtocolMode.AUTO -> "HTTP/2 when the server offers it. If a server resets an HTTP/2 stream (\"stream was reset\"), that host is switched to HTTP/1.1 for the rest of the session and the request is retried immediately."
-        com.openminis.desktop.net.HttpProtocolMode.HTTP1_ONLY -> "Every connection uses HTTP/1.1 (like curl --http1.1). Use this for gateways / relays whose HTTP/2 streaming is broken."
+        com.openminis.desktop.net.HttpProtocolMode.AUTO -> tr("net.http.hint.auto")
+        com.openminis.desktop.net.HttpProtocolMode.HTTP1_ONLY -> tr("net.http.hint.h1")
     })
 }
 

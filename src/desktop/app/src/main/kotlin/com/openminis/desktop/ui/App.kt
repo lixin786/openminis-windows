@@ -2,6 +2,9 @@
 // Copyright (C) OpenMinis contributors. Licensed under the GNU GPL v3 (see LICENSE).
 package com.openminis.desktop.ui
 
+import com.openminis.desktop.i18n.I18n
+import com.openminis.desktop.i18n.tr
+
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -144,7 +147,7 @@ fun App(state: AppState) {
                     contentAlignment = Alignment.Center,
                 ) {
                     Surface(shape = RoundedCornerShape(12.dp), tonalElevation = 6.dp) {
-                        Text("Drop files to attach them to this chat", Modifier.padding(24.dp), style = MaterialTheme.typography.titleMedium)
+                        Text(tr("chat.drop_files"), Modifier.padding(24.dp), style = MaterialTheme.typography.titleMedium)
                     }
                 }
             }
@@ -153,7 +156,7 @@ fun App(state: AppState) {
             if (state.showScheduled) ScheduledTasksWindow(state) { state.showScheduled = false }
             state.toast?.let { msg ->
                 AlertDialog(onDismissRequest = { state.toast = null }, confirmButton = {
-                    TextButton(onClick = { state.toast = null }) { Text("OK") }
+                    TextButton(onClick = { state.toast = null }) { Text(tr("common.ok")) }
                 }, text = { Box(Modifier.heightIn(max = 320.dp).verticalScroll(rememberScrollState())) { SelectionContainer { Text(msg) } } })
             }
         }
@@ -168,18 +171,18 @@ private fun Sidebar(state: AppState, modifier: Modifier) {
     Column(modifier.background(MaterialTheme.colorScheme.surfaceVariant).padding(10.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("OpenMinis", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-            IconButton(onClick = { state.showScheduled = true }) { Icon(Icons.Default.Schedule, "Scheduled tasks") }
-            IconButton(onClick = { state.showSettings = true }) { Icon(Icons.Default.Settings, "Settings (Ctrl+,)") }
+            IconButton(onClick = { state.showScheduled = true }) { Icon(Icons.Default.Schedule, tr("sidebar.scheduled")) }
+            IconButton(onClick = { state.showSettings = true }) { Icon(Icons.Default.Settings, tr("sidebar.settings")) }
         }
         Spacer(Modifier.height(6.dp))
         FilledTonalButton(onClick = { state.newChat() }, modifier = Modifier.fillMaxWidth()) {
-            Icon(Icons.Default.Add, null); Spacer(Modifier.width(6.dp)); Text("New chat  (Ctrl+N)")
+            Icon(Icons.Default.Add, null); Spacer(Modifier.width(6.dp)); Text(tr("sidebar.new_chat"))
         }
         Spacer(Modifier.height(8.dp))
         OutlinedTextField(
             value = filter, onValueChange = { filter = it }, singleLine = true,
-            placeholder = { Text("Search chats") }, leadingIcon = { Icon(Icons.Default.Search, null) },
-            modifier = Modifier.fillMaxWidth().tabMovesFocus().semantics { contentDescription = "Search chats" }, textStyle = MaterialTheme.typography.bodyMedium,
+            placeholder = { Text(tr("sidebar.search")) }, leadingIcon = { Icon(Icons.Default.Search, null) },
+            modifier = Modifier.fillMaxWidth().tabMovesFocus().semantics { contentDescription = tr("sidebar.search") }, textStyle = MaterialTheme.typography.bodyMedium,
         )
         Spacer(Modifier.height(8.dp))
         val items = state.conversations.filter {
@@ -189,7 +192,7 @@ private fun Sidebar(state: AppState, modifier: Modifier) {
             items(items, key = { it.id }) { c -> ConversationRow(state, c) }
         }
         Text(
-            "Workspace: ${state.settings.workspace().absolutePath}",
+            tr("sidebar.workspace", state.settings.workspace().absolutePath),
             style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 2, overflow = TextOverflow.Ellipsis,
             modifier = Modifier.clickable { state.openInExplorer(state.settings.workspace()) }.padding(top = 6.dp),
@@ -215,23 +218,23 @@ private fun ConversationRow(state: AppState, c: Conversation) {
             Text(c.title, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium,
                 fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal)
             Text(
-                (if (state.runningConversationId == c.id) "● running · " else "") + SimpleDateFormat("MM-dd HH:mm").format(Date(c.updatedAt)),
+                (if (state.runningConversationId == c.id) tr("sidebar.running_prefix") else "") + SimpleDateFormat("MM-dd HH:mm").format(Date(c.updatedAt)),
                 style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
         if (hovered || selected) {
             IconButton(onClick = { confirmDelete = true }, modifier = Modifier.size(28.dp)) {
-                Icon(Icons.Default.DeleteOutline, "Delete", modifier = Modifier.size(18.dp))
+                Icon(Icons.Default.DeleteOutline, tr("common.delete"), modifier = Modifier.size(18.dp))
             }
         }
     }
     if (confirmDelete) {
         AlertDialog(
             onDismissRequest = { confirmDelete = false },
-            title = { Text("Delete chat?") },
-            text = { Text("“${c.title}” will be permanently deleted.") },
-            confirmButton = { TextButton(onClick = { confirmDelete = false; state.delete(c.id) }) { Text("Delete") } },
-            dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel") } },
+            title = { Text(tr("chat.delete.title")) },
+            text = { Text(tr("chat.delete.body", c.title)) },
+            confirmButton = { TextButton(onClick = { confirmDelete = false; state.delete(c.id) }) { Text(tr("common.delete")) } },
+            dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text(tr("common.cancel")) } },
         )
     }
 }
@@ -277,7 +280,7 @@ private fun ChatPane(state: AppState, modifier: Modifier) {
                         item(key = "streaming") {
                             if (streaming != null) MessageItem(state, streaming, isLast = false, live = true)
                             else Row(Modifier.padding(24.dp), verticalAlignment = Alignment.CenterVertically) {
-                                CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp); Spacer(Modifier.width(8.dp)); Text("Thinking…")
+                                CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp); Spacer(Modifier.width(8.dp)); Text(tr("chat.thinking_progress"))
                             }
                         }
                     }
@@ -289,16 +292,16 @@ private fun ChatPane(state: AppState, modifier: Modifier) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
                 CircularProgressIndicator(Modifier.size(12.dp), strokeWidth = 2.dp)
                 Spacer(Modifier.width(8.dp))
-                Text("⏰ Scheduled task «$label» is running in this chat", style = MaterialTheme.typography.labelMedium,
+                Text(tr("chat.scheduled_running", label), style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
-                TextButton(onClick = { state.stopScheduled(id) }) { Text("Stop") }
+                TextButton(onClick = { state.stopScheduled(id) }) { Text(tr("common.stop")) }
             }
         } }
         conv?.id?.let { state.chatNotices[it] }?.let { notice ->
             Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("ⓘ $notice", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.weight(1f))
-                TextButton(onClick = { state.chatNotices.remove(conv.id) }) { Text("Dismiss") }
+                TextButton(onClick = { state.chatNotices.remove(conv.id) }) { Text(tr("common.dismiss")) }
             }
         }
         val status = state.statusText.takeIf { state.runningConversationId == conv?.id || state.compactingConversationId == conv?.id }
@@ -306,7 +309,7 @@ private fun ChatPane(state: AppState, modifier: Modifier) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
                 CircularProgressIndicator(Modifier.size(12.dp), strokeWidth = 2.dp)
                 Spacer(Modifier.width(8.dp))
-                Text(status ?: "Compacting context…", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(status ?: tr("chat.compacting"), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
         Composer(state)
@@ -329,7 +332,7 @@ private fun SubAgentBlock(state: AppState) {
                         if (r.state == "running") CircularProgressIndicator(Modifier.size(12.dp), strokeWidth = 2.dp)
                         Spacer(Modifier.width(8.dp))
                         val elapsed = (now - r.startedAt).coerceAtLeast(0) / 1000
-                        Text("${if (open) "▾" else "▸"} Sub agent «${r.agent}» · ${r.title} · ${r.state}" +
+                        Text("${if (open) "▾" else "▸"} " + tr("subagent.row", r.agent, r.title, I18n.trOr("subagent.state.${r.state}", r.state)) +
                             (r.currentTool?.let { " · $it" } ?: "") + " · ${elapsed}s · ${r.model}",
                             style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
@@ -348,26 +351,26 @@ private fun CompactDivider(state: AppState, convId: String, mk: CompactMarker, i
     Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
         HorizontalDivider(Modifier.weight(1f))
         Text(
-            "  Context compacted${if (mk.automatic) " automatically" else ""} · ${mk.compactedCount} message(s) summarized  ",
+            "  " + tr(if (mk.automatic) "compact.divider_auto" else "compact.divider", mk.compactedCount) + "  ",
             style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        TextButton(onClick = { show = true }) { Text("View summary") }
-        if (isLatest) TextButton(onClick = { state.revertCompact(convId) }, enabled = !state.isRunning) { Text("Undo") }
+        TextButton(onClick = { show = true }) { Text(tr("compact.view_summary")) }
+        if (isLatest) TextButton(onClick = { state.revertCompact(convId) }, enabled = !state.isRunning) { Text(tr("common.undo")) }
         HorizontalDivider(Modifier.weight(1f))
     }
     if (show) {
         AlertDialog(
             onDismissRequest = { show = false },
-            title = { Text("Context summary") },
+            title = { Text(tr("compact.summary_title")) },
             text = {
                 Column {
-                    Text("Written by ${mk.model ?: "the model"} · ${SimpleDateFormat("yyyy-MM-dd HH:mm").format(Date(mk.createdAt))}",
+                    Text(tr("compact.written_by", mk.model ?: tr("compact.the_model"), SimpleDateFormat("yyyy-MM-dd HH:mm").format(Date(mk.createdAt))),
                         style = MaterialTheme.typography.labelSmall)
                     Spacer(Modifier.height(6.dp))
                     MonoBlock(mk.summary)
                 }
             },
-            confirmButton = { TextButton(onClick = { show = false }) { Text("Close") } },
+            confirmButton = { TextButton(onClick = { show = false }) { Text(tr("common.close")) } },
         )
     }
 }
@@ -383,7 +386,7 @@ private fun TopBar(state: AppState, conv: Conversation?) {
             val pct = (reading.measuredTokens * 100L / reading.window).toInt()
             val near = reading.compactThreshold > 0 && reading.measuredTokens >= reading.compactThreshold * 0.8
             Text(
-                "ctx ≈${fmtK(reading.measuredTokens)} / ${fmtK(reading.window)} ($pct%)",
+                tr("toolbar.ctx", fmtK(reading.measuredTokens), fmtK(reading.window), pct),
                 style = MaterialTheme.typography.labelMedium,
                 color = if (near) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(end = 4.dp),
@@ -392,7 +395,7 @@ private fun TopBar(state: AppState, conv: Conversation?) {
         IconButton(
             onClick = { state.compactNow() },
             enabled = conv != null && conv.messages.isNotEmpty() && !state.isRunning && state.compactingConversationId == null,
-        ) { Icon(Icons.Default.Compress, "Compact context (/compact)") }
+        ) { Icon(Icons.Default.Compress, tr("toolbar.compact")) }
         Dropdown(
             value = s.activeProvider, options = ProviderKind.entries, label = { it.label },
             onSelect = { state.updateSettings(s.copy(activeProvider = it)) },
@@ -407,8 +410,8 @@ private fun TopBar(state: AppState, conv: Conversation?) {
             onSelect = { state.updateSettings(s.withProvider(kind, ps.copy(model = it))) },
         )
         Dropdown(
-            value = s.thinkingLevel, options = listOf("OFF", "LOW", "MEDIUM", "HIGH"), prefix = "Thinking: ",
-            label = { it.lowercase().replaceFirstChar(Char::uppercase) },
+            value = s.thinkingLevel, options = listOf("OFF", "LOW", "MEDIUM", "HIGH"), prefix = tr("toolbar.thinking_prefix"),
+            label = { I18n.trOr("thinking.$it", it.lowercase().replaceFirstChar(Char::uppercase)) },
             onSelect = { state.updateSettings(s.copy(thinkingLevel = it)) },
         )
     }
@@ -418,16 +421,16 @@ private fun TopBar(state: AppState, conv: Conversation?) {
 private fun EmptyState(state: AppState) {
     val s = state.settings
     Column(Modifier.fillMaxSize().padding(40.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-        Text("How can I help?", style = MaterialTheme.typography.headlineMedium)
+        Text(tr("empty.headline"), style = MaterialTheme.typography.headlineMedium)
         Spacer(Modifier.height(8.dp))
         Text(
             "${s.activeProvider.label} · ${s.provider().effectiveModel(s.activeProvider)}" +
-                (if (s.toolsEnabled) " · tools: shell (${s.shell.label}), files, memory" else " · tools off"),
+                (if (s.toolsEnabled) tr("empty.tools_on", s.shell.label) else tr("empty.tools_off")),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         if (s.provider().apiKey.isBlank() && s.activeProvider != ProviderKind.OPENAI_COMPATIBLE) {
             Spacer(Modifier.height(16.dp))
-            Button(onClick = { state.showSettings = true }) { Text("Add an API key") }
+            Button(onClick = { state.showSettings = true }) { Text(tr("empty.add_key")) }
         }
     }
 }
@@ -470,17 +473,17 @@ private fun MessageItem(state: AppState, m: ChatMessage, isLast: Boolean, live: 
             } else {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     IconButton(onClick = { clipboard.setText(AnnotatedString(m.displayText)) }, modifier = Modifier.size(30.dp)) {
-                        Icon(Icons.Default.ContentCopy, "Copy", Modifier.size(16.dp))
+                        Icon(Icons.Default.ContentCopy, tr("common.copy"), Modifier.size(16.dp))
                     }
                     if (isLast) IconButton(onClick = { state.regenerate() }, modifier = Modifier.size(30.dp), enabled = !state.isRunning) {
-                        Icon(Icons.Default.Refresh, "Regenerate", Modifier.size(16.dp))
+                        Icon(Icons.Default.Refresh, tr("msg.regenerate"), Modifier.size(16.dp))
                     }
                     m.modelLabel?.let {
                         Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(end = 8.dp))
                     }
                     if (m.inputTokens != null || m.outputTokens != null) {
-                        Text("↑${m.inputTokens ?: 0} ↓${m.outputTokens ?: 0} tokens", style = MaterialTheme.typography.labelSmall,
+                        Text(tr("msg.tokens", m.inputTokens ?: 0, m.outputTokens ?: 0), style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
@@ -494,7 +497,7 @@ private fun RoundView(r: Round) {
     if (r.thinking.isNotBlank()) {
         var open by remember { mutableStateOf(false) }
         Text(
-            if (open) "▾ Thinking" else "▸ Thinking (${r.thinking.length} chars)",
+            if (open) tr("msg.thinking_open") else tr("msg.thinking_closed", r.thinking.length),
             style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.clickable { open = !open }.padding(vertical = 4.dp),
         )
@@ -547,10 +550,10 @@ private fun ToolCallCard(tc: ToolCall) {
             }
             if (open) {
                 Spacer(Modifier.height(6.dp))
-                Text("Arguments", style = MaterialTheme.typography.labelSmall)
+                Text(tr("tool.arguments"), style = MaterialTheme.typography.labelSmall)
                 MonoBlock(prettyJson(tc.argsJson))
                 tc.result?.let {
-                    Text("Result", style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 4.dp))
+                    Text(tr("tool.result"), style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 4.dp))
                     MonoBlock(it.take(20_000))
                 }
             }
@@ -602,15 +605,15 @@ private fun Composer(state: AppState) {
     }
     Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.Bottom) {
         IconButton(onClick = {
-            val chooser = javax.swing.JFileChooser().apply { isMultiSelectionEnabled = true; dialogTitle = "Attach files" }
+            val chooser = javax.swing.JFileChooser().apply { isMultiSelectionEnabled = true; dialogTitle = tr("attach.dialog_title") }
             if (chooser.showOpenDialog(null) == javax.swing.JFileChooser.APPROVE_OPTION) state.attachFiles(chooser.selectedFiles.toList())
-        }, modifier = Modifier.size(52.dp)) { Icon(Icons.Default.AttachFile, "Attach files (or drag & drop, Ctrl+V)") }
+        }, modifier = Modifier.size(52.dp)) { Icon(Icons.Default.AttachFile, tr("composer.attach")) }
         Spacer(Modifier.width(4.dp))
         OutlinedTextField(
             value = value,
             onValueChange = { value = it },
             modifier = Modifier.weight(1f).heightIn(min = 52.dp, max = 260.dp).focusRequester(focus)
-                .semantics { contentDescription = "Message input. Enter sends, Shift+Enter new line, Tab moves focus" }
+                .semantics { contentDescription = tr("composer.a11y") }
                 .tabMovesFocus()
                 .onPreviewKeyEvent { ev ->
                     // Enter = send, Shift+Enter = newline. Don't steal Enter while an IME is composing.
@@ -633,16 +636,16 @@ private fun Composer(state: AppState) {
                         state.stop(); true
                     } else false
                 },
-            placeholder = { Text("Message OpenMinis — Enter to send · drop/paste files · /compact") },
+            placeholder = { Text(tr("composer.placeholder")) },
             maxLines = 12,
             shape = RoundedCornerShape(14.dp),
         )
         Spacer(Modifier.width(10.dp))
         if (state.isRunning) {
-            FilledTonalIconButton(onClick = { state.stop() }, modifier = Modifier.size(52.dp)) { Icon(Icons.Default.Stop, "Stop (Esc)") }
+            FilledTonalIconButton(onClick = { state.stop() }, modifier = Modifier.size(52.dp)) { Icon(Icons.Default.Stop, tr("composer.stop")) }
         } else {
             FilledIconButton(onClick = { submit() }, enabled = value.text.isNotBlank() || pending.isNotEmpty(), modifier = Modifier.size(52.dp)) {
-                Icon(Icons.Default.Send, "Send")
+                Icon(Icons.Default.Send, tr("composer.send"))
             }
         }
     }
@@ -691,11 +694,11 @@ internal fun AttachmentChip(state: AppState, a: Attachment, onRemove: (() -> Uni
             Column(Modifier.widthIn(max = 180.dp)) {
                 Text(a.fileName, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelMedium)
                 Text(
-                    AttachmentStore.humanSize(a.sizeBytes) + " · " + when (a.kind) { AttachmentKind.IMAGE -> "image"; AttachmentKind.TEXT -> "text (inlined)"; else -> "file (path given to agent)" },
+                    AttachmentStore.humanSize(a.sizeBytes) + " · " + when (a.kind) { AttachmentKind.IMAGE -> tr("attach.kind.image"); AttachmentKind.TEXT -> tr("attach.kind.text"); else -> tr("attach.kind.file") },
                     style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1,
                 )
             }
-            if (onRemove != null) IconButton(onClick = onRemove, modifier = Modifier.size(26.dp)) { Icon(Icons.Default.Close, "Remove ${a.fileName}", Modifier.size(16.dp)) }
+            if (onRemove != null) IconButton(onClick = onRemove, modifier = Modifier.size(26.dp)) { Icon(Icons.Default.Close, tr("attach.remove", a.fileName), Modifier.size(16.dp)) }
         }
     }
 }
@@ -710,7 +713,7 @@ internal fun AttachmentChip(state: AppState, a: Attachment, onRemove: (() -> Uni
 @Composable
 private fun ApprovalDialog(state: AppState, p: PendingApproval) {
     val allowFocus = remember { FocusRequester() }
-    val rememberLabel = if (p.request.onAlwaysAllow != null) p.request.rememberLabel ?: "Always allow" else null
+    val rememberLabel = if (p.request.onAlwaysAllow != null) p.request.rememberLabel ?: tr("approval.always") else null
     LaunchedEffect(p) { kotlinx.coroutines.delay(60); runCatching { allowFocus.requestFocus() } }
     AlertDialog(
         onDismissRequest = { state.answerApproval(allow = false) },   // Esc
@@ -723,30 +726,30 @@ private fun ApprovalDialog(state: AppState, p: PendingApproval) {
                 ev.key == Key.Escape -> { state.answerApproval(allow = false); true }
                 else -> false
             }
-        }.semantics { contentDescription = "Approval needed: ${p.request.summary}" },
+        }.semantics { contentDescription = tr("approval.a11y", p.request.summary) },
         icon = { Icon(Icons.Default.Terminal, null) },
         title = { Text(p.request.summary) },
         text = {
             Column {
-                Text("The agent wants to run this on your computer:", style = MaterialTheme.typography.bodyMedium)
+                Text(tr("approval.intro"), style = MaterialTheme.typography.bodyMedium)
                 Spacer(Modifier.height(8.dp))
                 MonoBlock(p.request.detail)
                 Spacer(Modifier.height(6.dp))
-                Text("Enter = Allow · Esc = Deny" + (rememberLabel?.let { " · Ctrl+Enter or A = $it" } ?: ""), style = MaterialTheme.typography.labelSmall,
+                Text(tr("approval.keys") + (rememberLabel?.let { tr("approval.keys_remember", it) } ?: ""), style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         },
         confirmButton = {
             Row {
                 if (rememberLabel != null) TextButton(onClick = { state.answerApproval(allow = true, dontAskAgain = true) },
-                    modifier = Modifier.semantics { contentDescription = "$rememberLabel (Ctrl+Enter or A)" }) { Text("$rememberLabel (Ctrl+Enter / A)") }
+                    modifier = Modifier.semantics { contentDescription = tr("approval.remember_a11y", rememberLabel) }) { Text(tr("approval.remember_button", rememberLabel)) }
                 Button(onClick = { state.answerApproval(allow = true) },
-                    modifier = Modifier.focusRequester(allowFocus).semantics { contentDescription = "Allow (Enter)" }) { Text("Allow (Enter)") }
+                    modifier = Modifier.focusRequester(allowFocus).semantics { contentDescription = tr("approval.allow") }) { Text(tr("approval.allow")) }
             }
         },
         dismissButton = {
             TextButton(onClick = { state.answerApproval(allow = false) },
-                modifier = Modifier.semantics { contentDescription = "Deny (Esc)" }) { Text("Deny (Esc)") }
+                modifier = Modifier.semantics { contentDescription = tr("approval.deny") }) { Text(tr("approval.deny")) }
         },
     )
 }

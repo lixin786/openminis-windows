@@ -2,6 +2,8 @@
 // Copyright (C) OpenMinis contributors. Licensed under the GNU GPL v3 (see LICENSE).
 package com.openminis.desktop.ui
 
+import com.openminis.desktop.i18n.tr
+
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -146,7 +148,8 @@ class AppState(val paths: AppPaths, private val scope: CoroutineScope) {
             tools = com.openminis.desktop.scheduled.ScheduledToolbox(
                 subAgents.toolbox(com.openminis.desktop.mcp.McpToolbox(com.openminis.desktop.agent.RegistryToolbox(tools), mcp)),
                 scheduler, approver, currentConversation = { runningConversationId },
-                describe = { t -> describeTrigger(t) { id -> scheduler.list().firstOrNull { it.id == id }?.label ?: id } },
+                describe = { t -> describeTrigger(t, lang = "en") { id -> scheduler.list().firstOrNull { it.id == id }?.label ?: id } },
+                describeUi = { t -> describeTrigger(t) { id -> scheduler.list().firstOrNull { it.id == id }?.label ?: id } },
             ),
             shaper = shaper,
         )
@@ -157,8 +160,7 @@ class AppState(val paths: AppPaths, private val scope: CoroutineScope) {
 
     internal fun mcpDeniedNotice(denied: List<String>): String? = when {
         denied.isEmpty() -> null
-        else -> "Skipped MCP server " + denied.joinToString(", ") { "«$it»" } +
-            " — you denied starting it, so its tools are not available in this turn. Settings › MCP servers › Connect starts it."
+        else -> tr("notice.mcp_denied", denied.joinToString(tr("list_sep")) { tr("quote", it) })
     }
 
     fun updateMcpServers(list: List<com.openminis.desktop.mcp.McpServerConfig>) = scope.launch(Dispatchers.IO) { mcp.setServers(list) }
@@ -206,7 +208,7 @@ class AppState(val paths: AppPaths, private val scope: CoroutineScope) {
         while (runningConversationId == convId || compactingConversationId == convId || scheduledRunning.containsKey(convId)) kotlinx.coroutines.delay(500)
         val ok = withContext(Dispatchers.Main) {
             if (conversations.none { it.id == convId }) return@withContext false
-            scheduledRunning[convId] = t.label.ifBlank { "Scheduled task" }
+            scheduledRunning[convId] = t.label.ifBlank { tr("scheduled.default_label") }
             scheduledTaskOfConv[convId] = t.id
             val s0 = settings
             mutate(convId, persist = true) {
@@ -217,8 +219,8 @@ class AppState(val paths: AppPaths, private val scope: CoroutineScope) {
             true
         }
         if (!ok) return com.openminis.desktop.scheduled.ScheduledOutcome(null, "The target chat was deleted.", ok = false)
-        val label = t.label.ifBlank { "Scheduled task" }
-        val labelled = ToolApprover { req -> approver.approve(req.copy(summary = "Scheduled task «$label»: ${req.summary}")) }
+        val label = t.label.ifBlank { tr("scheduled.default_label") }
+        val labelled = ToolApprover { req -> approver.approve(req.copy(summary = tr("scheduled.approval_prefix", label, req.summary))) }
         val runEngine = AgentEngine(
             providerFactory = { st, ref -> DesktopProviderFactory.create(st, ref) },
             tools = subAgents.toolbox(com.openminis.desktop.mcp.McpToolbox(com.openminis.desktop.agent.RegistryToolbox(ToolRegistry({ settings }, memory, labelled, ::readRoots)), mcp)),
@@ -300,6 +302,7 @@ class AppState(val paths: AppPaths, private val scope: CoroutineScope) {
     val isRunning: Boolean get() = runningConversationId != null
 
     fun updateSettings(s: AppSettings) {
+        if (s.language != settings.language) com.openminis.desktop.i18n.I18n.apply(s.language)
         if (s.network != settings.network) com.openminis.desktop.net.DesktopHttp.update(s.network)
         settings = s
         com.openminis.app.data.FastModePrefs.setEnabled(false)
@@ -351,13 +354,13 @@ class AppState(val paths: AppPaths, private val scope: CoroutineScope) {
             val errors = mutableListOf<String>()
             for (f in files) {
                 when {
-                    f.isDirectory -> errors += "${f.name}: folders can't be attached (attach the files inside, or give the agent the path)"
+                    f.isDirectory -> errors += tr("attach.err.folder", f.name)
                     else -> runCatching { attachmentStore.importFile(conv.id, f) }.onSuccess { added += it }.onFailure { errors += "${f.name}: ${it.message}" }
                 }
             }
             withContext(Dispatchers.Main) {
                 if (added.isNotEmpty()) pendingAttachments[conv.id] = pending(conv.id) + added
-                if (errors.isNotEmpty()) toast = "Some files were not attached:\n" + errors.joinToString("\n")
+                if (errors.isNotEmpty()) toast = tr("toast.not_attached", errors.joinToString("\n"))
                 composerFocusTick++
             }
         }
@@ -368,7 +371,7 @@ class AppState(val paths: AppPaths, private val scope: CoroutineScope) {
         scope.launch(Dispatchers.IO) {
             runCatching { attachmentStore.importImage(conv.id, image) }
                 .onSuccess { a -> withContext(Dispatchers.Main) { pendingAttachments[conv.id] = pending(conv.id) + a } }
-                .onFailure { e -> withContext(Dispatchers.Main) { toast = "Could not paste image: ${e.message}" } }
+                .onFailure { e -> withContext(Dispatchers.Main) { toast = tr("toast.paste_failed", e.message) } }
         }
     }
 
@@ -388,7 +391,7 @@ class AppState(val paths: AppPaths, private val scope: CoroutineScope) {
         if (trimmed == "/compact") { compactNow(); return true }
         val atts = pending(conv.id)
         if ((trimmed.isEmpty() && atts.isEmpty()) || isRunning) return false
-        if (scheduledRunning.containsKey(conv.id)) { toast = "A scheduled task is running in this chat. Wait for it to finish (or stop it)."; return false }
+        if (scheduledRunning.containsKey(conv.id)) { toast = tr("toast.scheduled_busy"); return false }
         val s = settings
         val user = ChatMessage(role = ChatRole.USER, text = trimmed, attachments = atts)
         val title = if (conv.messages.isEmpty()) titleFrom(trimmed.ifEmpty { atts.first().fileName }) else conv.title
@@ -460,23 +463,23 @@ class AppState(val paths: AppPaths, private val scope: CoroutineScope) {
     /** Manual compaction of the selected chat (toolbar button, Chat menu, `/compact`). */
     fun compactNow() {
         val conv = selected ?: return
-        if (isRunning || compactingConversationId != null) { toast = "Wait for the current response to finish before compacting."; return }
-        if (conv.messages.isEmpty()) { toast = "Nothing to compact — the chat is empty."; return }
+        if (isRunning || compactingConversationId != null) { toast = tr("toast.compact_wait"); return }
+        if (conv.messages.isEmpty()) { toast = tr("toast.compact_empty"); return }
         val s = settings
         val ctx = contextStateFor(conv)
         compactingConversationId = conv.id
-        statusText = "Compacting context…"
+        statusText = tr("chat.compacting")
         job = scope.launch {
             try {
                 val outcome = withContext(Dispatchers.IO) {
                     engine.compact(conv.messages, s, ctx, object : TurnListener {
-                        override fun onStatus(text: String?) { scope.launch(Dispatchers.Main) { statusText = text ?: "Compacting context…" } }
+                        override fun onStatus(text: String?) { scope.launch(Dispatchers.Main) { statusText = text ?: tr("chat.compacting") } }
                     })
                 }
                 when (outcome) {
                     is CompactOutcome.Done -> mutate(conv.id, persist = true) { it.copy(compactMarkers = ctx.markers.toList()) }
                     is CompactOutcome.Skipped -> toast = outcome.reason
-                    is CompactOutcome.Failed -> toast = "Compaction failed: ${outcome.reason}"
+                    is CompactOutcome.Failed -> toast = tr("toast.compact_failed", outcome.reason)
                 }
             } catch (_: CancellationException) {
             } finally {
@@ -538,7 +541,7 @@ class AppState(val paths: AppPaths, private val scope: CoroutineScope) {
         scope.launch(Dispatchers.IO) {
             f.mkdirs()
             runCatching { java.awt.Desktop.getDesktop().open(f) }.onFailure {
-                withContext(Dispatchers.Main) { toast = "Cannot open ${f.absolutePath}: ${it.message}" }
+                withContext(Dispatchers.Main) { toast = tr("toast.cannot_open", f.absolutePath, it.message) }
             }
         }
     }
@@ -547,7 +550,7 @@ class AppState(val paths: AppPaths, private val scope: CoroutineScope) {
         scope.launch(Dispatchers.IO) {
             if (!f.exists()) { f.parentFile?.mkdirs(); f.writeText(template) }
             runCatching { java.awt.Desktop.getDesktop().open(f) }.onFailure {
-                withContext(Dispatchers.Main) { toast = "Cannot open ${f.absolutePath}: ${it.message}" }
+                withContext(Dispatchers.Main) { toast = tr("toast.cannot_open", f.absolutePath, it.message) }
             }
         }
     }

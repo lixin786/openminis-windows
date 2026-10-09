@@ -3,6 +3,8 @@
 // Copyright (C) OpenMinis contributors. Licensed under the GNU GPL v3 (see LICENSE).
 package com.openminis.desktop.ui
 
+import com.openminis.desktop.i18n.tr
+
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDownward
@@ -34,13 +36,13 @@ private fun ModelPicker(label: String, value: ModelRef?, settings: AppSettings, 
 
 @Composable
 internal fun SubAgentSection(cfg: SubAgentConfig, settings: AppSettings, toolNames: List<String>, onChange: (SubAgentConfig) -> Unit) {
-    Toggle("Enable sub agents (subagent_task tool)", cfg.enabled) { onChange(cfg.copy(enabled = it)) }
-    Hint("The main agent can delegate a self-contained task to a sub agent, which runs its own tool loop and returns its final answer. Shell commands a sub agent runs still ask for your approval when confirmation is on.")
-    NumberField("Sub agents running at once (1–10)", cfg.maxConcurrent, Modifier.fillMaxWidth()) { onChange(cfg.copy(maxConcurrent = it)) }
-    NumberField("Delegation depth (1 = sub agents cannot delegate further, max ${SubAgentConfig.MAX_DEPTH_LIMIT})", cfg.maxDepth, Modifier.fillMaxWidth()) { onChange(cfg.copy(maxDepth = it)) }
-    ModelPicker("Default (strong) model:", cfg.defaultModel, settings, "Same as the conversation") { onChange(cfg.copy(defaultModel = it)) }
-    ModelPicker("Light model:", cfg.lightModel, settings, "Same as the conversation") { onChange(cfg.copy(lightModel = it)) }
-    Hint("model_choice=default_model / sub_model use these; models come from the active model and the fallback list above.")
+    Toggle(tr("sub.enable"), cfg.enabled) { onChange(cfg.copy(enabled = it)) }
+    Hint(tr("sub.hint"))
+    NumberField(tr("sub.concurrent"), cfg.maxConcurrent, Modifier.fillMaxWidth()) { onChange(cfg.copy(maxConcurrent = it)) }
+    NumberField(tr("sub.depth", SubAgentConfig.MAX_DEPTH_LIMIT), cfg.maxDepth, Modifier.fillMaxWidth()) { onChange(cfg.copy(maxDepth = it)) }
+    ModelPicker(tr("sub.default_model"), cfg.defaultModel, settings, tr("sub.same_as_conv")) { onChange(cfg.copy(defaultModel = it)) }
+    ModelPicker(tr("sub.light_model"), cfg.lightModel, settings, tr("sub.same_as_conv")) { onChange(cfg.copy(lightModel = it)) }
+    Hint(tr("sub.choice_hint"))
 
     val roster = cfg.roster
     roster.forEachIndexed { i, def ->
@@ -61,7 +63,7 @@ internal fun SubAgentSection(cfg: SubAgentConfig, settings: AppSettings, toolNam
             val n = generateSequence(1) { it + 1 }.map { "agent-$it" }.first { name -> roster.none { it.name.equals(name, true) } }
             onChange(cfg.copy(agents = roster + SubAgentDefinition(name = n, description = "When to use this agent…", sortOrder = roster.size)))
         },
-    ) { Text("Add sub agent") }
+    ) { Text(tr("sub.add")) }
 }
 
 @Composable
@@ -75,32 +77,32 @@ private fun SubAgentEditor(
         Column(Modifier.padding(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 TextButton(onClick = { open = !open }, modifier = Modifier.weight(1f)) {
-                    Text("${if (open) "▾" else "▸"} ${def.displayName()}" + (extras.pinnedModel?.let { " · ${it.label}" } ?: " · Auto"),
+                    Text("${if (open) "▾" else "▸"} ${def.displayName()}" + (extras.pinnedModel?.let { " · ${it.label}" } ?: tr("sub.auto")),
                         Modifier.fillMaxWidth())
                 }
-                IconButton(onClick = { onMove(-1) }, enabled = canMoveUp) { Icon(Icons.Default.ArrowUpward, "Move up") }
-                IconButton(onClick = { onMove(1) }, enabled = canMoveDown) { Icon(Icons.Default.ArrowDownward, "Move down") }
-                IconButton(onClick = onDelete, enabled = !def.isBuiltIn) { Icon(Icons.Default.Delete, "Delete sub agent") }
+                IconButton(onClick = { onMove(-1) }, enabled = canMoveUp) { Icon(Icons.Default.ArrowUpward, tr("common.move_up")) }
+                IconButton(onClick = { onMove(1) }, enabled = canMoveDown) { Icon(Icons.Default.ArrowDownward, tr("common.move_down")) }
+                IconButton(onClick = onDelete, enabled = !def.isBuiltIn) { Icon(Icons.Default.Delete, tr("sub.delete")) }
             }
             if (open) {
                 OutlinedTextField(def.name, { onChange(def.copy(name = it.take(SubAgentLimits.NAME_MAX_LENGTH)), extras) },
-                    label = { Text("Name (what the model passes as agent)") }, singleLine = true, enabled = !def.isBuiltIn,
+                    label = { Text(tr("sub.name")) }, singleLine = true, enabled = !def.isBuiltIn,
                     modifier = Modifier.fillMaxWidth().tabMovesFocus())
                 OutlinedTextField(def.description, { onChange(def.copy(description = it.take(SubAgentLimits.DESCRIPTION_MAX_LENGTH)), extras) },
-                    label = { Text("Description — when to use it (max ${SubAgentLimits.DESCRIPTION_MAX_LENGTH})") },
+                    label = { Text(tr("sub.description", SubAgentLimits.DESCRIPTION_MAX_LENGTH)) },
                     modifier = Modifier.fillMaxWidth().tabMovesFocus())
                 OutlinedTextField(def.instructions, { onChange(def.copy(instructions = it.take(SubAgentLimits.INSTRUCTIONS_MAX_LENGTH)), extras) },
-                    label = { Text("Instructions for the sub agent (optional)") }, minLines = 3,
+                    label = { Text(tr("sub.instructions")) }, minLines = 3,
                     modifier = Modifier.fillMaxWidth())
-                ModelPicker("Model:", extras.pinnedModel, settings, "Auto (model_choice)") { onChange(def, extras.copy(pinnedModel = it)) }
+                ModelPicker(tr("common.model"), extras.pinnedModel, settings, tr("sub.auto_choice")) { onChange(def, extras.copy(pinnedModel = it)) }
                 var toolsText by remember(def.id) { mutableStateOf(extras.allowedTools?.joinToString(", ").orEmpty()) }
                 OutlinedTextField(toolsText, { t ->
                     toolsText = t
                     val list = t.split(',', ' ', ';').map { it.trim() }.filter { it.isNotEmpty() }
                     onChange(def, extras.copy(allowedTools = list.ifEmpty { null }))
-                }, label = { Text("Allowed tools, comma separated (blank = all except memory_write)") }, singleLine = true,
+                }, label = { Text(tr("sub.tools")) }, singleLine = true,
                     modifier = Modifier.fillMaxWidth().tabMovesFocus())
-                if (toolNames.isNotEmpty()) Hint("Available: " + toolNames.joinToString(", "))
+                if (toolNames.isNotEmpty()) Hint(tr("sub.available", toolNames.joinToString(", ")))
             }
         }
     }

@@ -3,6 +3,8 @@
 // Copyright (C) OpenMinis contributors. Licensed under the GNU GPL v3 (see LICENSE).
 package com.openminis.desktop
 
+import com.openminis.desktop.i18n.tr
+
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.input.key.Key
@@ -37,7 +39,7 @@ fun main(args: Array<String>) {
 
     application {
         val scope = rememberCoroutineScope()
-        val state = remember { AppState(paths, scope) }
+        val state = remember { AppState(paths, scope).also { com.openminis.desktop.i18n.I18n.apply(it.settings.language) } }
         val placementFile = remember { java.io.File(paths.root, "window.json") }
         val placement = remember {
             com.openminis.desktop.core.WindowPlacements.resolve(
@@ -87,25 +89,25 @@ fun main(args: Array<String>) {
                 }
             }
             MenuBar {
-                Menu("File", mnemonic = 'F') {
-                    Item("New chat", shortcut = KeyShortcut(Key.N, ctrl = true), onClick = { state.newChat() })
-                    Item("Settings…", shortcut = KeyShortcut(Key.Comma, ctrl = true), onClick = { state.showSettings = true })
-                    Item("Scheduled tasks…", onClick = { state.showScheduled = true })
+                Menu(tr("menu.file"), mnemonic = 'F') {
+                    Item(tr("menu.new_chat"), shortcut = KeyShortcut(Key.N, ctrl = true), onClick = { state.newChat() })
+                    Item(tr("menu.settings"), shortcut = KeyShortcut(Key.Comma, ctrl = true), onClick = { state.showSettings = true })
+                    Item(tr("menu.scheduled"), onClick = { state.showScheduled = true })
                     Separator()
-                    Item("Open workspace folder", onClick = { state.openInExplorer(state.settings.workspace()) })
-                    Item("Open data folder", onClick = { state.openInExplorer(paths.root) })
+                    Item(tr("menu.open_workspace"), onClick = { state.openInExplorer(state.settings.workspace()) })
+                    Item(tr("menu.open_data"), onClick = { state.openInExplorer(paths.root) })
                     Separator()
-                    Item("Exit", onClick = { savePlacement(); state.shutdown(); exitApplication() })
+                    Item(tr("menu.exit"), onClick = { savePlacement(); state.shutdown(); exitApplication() })
                 }
-                Menu("Chat", mnemonic = 'C') {
-                    Item("Stop generating", enabled = state.isRunning, onClick = { state.stop() })
-                    Item("Regenerate last reply", enabled = !state.isRunning, onClick = { state.regenerate() })
-                    Item("Compact context", shortcut = KeyShortcut(Key.K, ctrl = true, shift = true), enabled = !state.isRunning, onClick = { state.compactNow() })
-                    Item("Attach files…", onClick = {
-                        val chooser = javax.swing.JFileChooser().apply { isMultiSelectionEnabled = true; dialogTitle = "Attach files" }
+                Menu(tr("menu.chat"), mnemonic = 'C') {
+                    Item(tr("menu.stop"), enabled = state.isRunning, onClick = { state.stop() })
+                    Item(tr("menu.regenerate"), enabled = !state.isRunning, onClick = { state.regenerate() })
+                    Item(tr("menu.compact"), shortcut = KeyShortcut(Key.K, ctrl = true, shift = true), enabled = !state.isRunning, onClick = { state.compactNow() })
+                    Item(tr("menu.attach"), onClick = {
+                        val chooser = javax.swing.JFileChooser().apply { isMultiSelectionEnabled = true; dialogTitle = tr("attach.dialog_title") }
                         if (chooser.showOpenDialog(window) == javax.swing.JFileChooser.APPROVE_OPTION) state.attachFiles(chooser.selectedFiles.toList())
                     })
-                    Item("Delete chat", onClick = { state.selectedId?.let(state::delete) })
+                    Item(tr("menu.delete_chat"), onClick = { state.selectedId?.let(state::delete) })
                 }
             }
             App(state)

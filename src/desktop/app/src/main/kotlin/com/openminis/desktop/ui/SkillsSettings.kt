@@ -4,6 +4,8 @@
 // Copyright (C) OpenMinis contributors. Licensed under the GNU GPL v3 (see LICENSE).
 package com.openminis.desktop.ui
 
+import com.openminis.desktop.i18n.tr
+
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
@@ -36,51 +38,51 @@ internal fun SkillsSection(state: AppState, disabled: List<String>, onDisabledCh
             val r = withContext(Dispatchers.IO) { runCatching(block) }
             busy = false
             r.onSuccess { res ->
-                message = ("Installed «${res.skill.name}» → ${res.skill.dir.absolutePath}" + (res.warning?.let { "\n$it" } ?: "")) to (res.warning != null)
+                message = (tr("skills.installed", res.skill.name, res.skill.dir.absolutePath) + (res.warning?.let { "\n$it" } ?: "")) to (res.warning != null)
                 if (res.skill.id in disabled) onDisabledChange(disabled - res.skill.id)
                 reload++
-            }.onFailure { e -> message = "$label failed: ${e.message}" to true }
+            }.onFailure { e -> message = tr("skills.failed", label, e.message) to true }
         }
     }
 
-    Hint("${skills.size} skill(s). Each skill is a folder with SKILL.md under ${state.paths.skillsDir.absolutePath} (imports go here) or <workspace>\\.skills. Switched-off skills stay on disk but are not offered to the agent.")
+    Hint(tr("skills.hint", skills.size, state.paths.skillsDir.absolutePath))
     skills.forEach { sk ->
         SkillRow(sk, enabled = sk.id !in disabled,
             onToggle = { on -> onDisabledChange(if (on) disabled - sk.id else (disabled + sk.id).distinct()) },
             onOpen = { state.openInExplorer(sk.dir) },
             onDelete = {
                 runCatching { state.skillImporter.delete(sk, state.skillRoots()) }
-                    .onSuccess { message = "Deleted «${sk.name}»." to false; reload++ }
-                    .onFailure { message = "Delete failed: ${it.message}" to true }
+                    .onSuccess { message = tr("skills.deleted", sk.name) to false; reload++ }
+                    .onFailure { message = tr("skills.delete_failed", it.message) to true }
             })
     }
 
     Spacer(Modifier.height(8.dp))
-    Text("Import a skill", style = MaterialTheme.typography.titleSmall)
+    Text(tr("skills.import_title"), style = MaterialTheme.typography.titleSmall)
     var url by remember { mutableStateOf("") }
     Row(verticalAlignment = Alignment.CenterVertically) {
         OutlinedTextField(url, { url = it }, singleLine = true, modifier = Modifier.weight(1f).tabMovesFocus(),
-            label = { Text("GitHub folder / SKILL.md URL (e.g. https://github.com/user/repo/tree/main/skills/x)") })
+            label = { Text(tr("skills.url_label")) })
         Spacer(Modifier.width(8.dp))
-        OutlinedButton(enabled = url.isNotBlank() && !busy, onClick = { val u = url.trim(); run("Import from URL") { state.skillImporter.importFromUrl(u) }; url = "" }) { Text("Import URL") }
+        OutlinedButton(enabled = url.isNotBlank() && !busy, onClick = { val u = url.trim(); run(tr("skills.op.url")) { state.skillImporter.importFromUrl(u) }; url = "" }) { Text(tr("skills.import_url")) }
     }
     Row {
         OutlinedButton(enabled = !busy, onClick = {
-            pickFile(dirs = false)?.let { f -> run("Import ${f.name}") {
+            pickFile(dirs = false)?.let { f -> run(tr("skills.op.file", f.name)) {
                 if (f.name.endsWith(".md", true)) state.skillImporter.importFromContent(f.readText(Charsets.UTF_8)) else state.skillImporter.importFromArchive(f)
             } }
-        }) { Text("Import .zip / .skill / SKILL.md file…") }
+        }) { Text(tr("skills.import_file")) }
         Spacer(Modifier.width(8.dp))
-        OutlinedButton(enabled = !busy, onClick = { pickFile(dirs = true)?.let { d -> run("Import folder") { state.skillImporter.importFromFolder(d) } } }) { Text("Import folder…") }
+        OutlinedButton(enabled = !busy, onClick = { pickFile(dirs = true)?.let { d -> run(tr("skills.op.folder")) { state.skillImporter.importFromFolder(d) } } }) { Text(tr("skills.import_folder")) }
         Spacer(Modifier.width(8.dp))
-        OutlinedButton(onClick = { state.openInExplorer(state.paths.skillsDir) }) { Text("Open skills folder") }
+        OutlinedButton(onClick = { state.openInExplorer(state.paths.skillsDir) }) { Text(tr("skills.open_folder")) }
         Spacer(Modifier.width(8.dp))
-        TextButton(onClick = { reload++ }) { Text("Rescan") }
+        TextButton(onClick = { reload++ }) { Text(tr("skills.rescan")) }
     }
     var paste by remember { mutableStateOf("") }
     OutlinedTextField(paste, { paste = it }, minLines = 3, modifier = Modifier.fillMaxWidth(),
-        label = { Text("…or paste SKILL.md content (--- name: … description: … --- then instructions)") })
-    OutlinedButton(enabled = paste.isNotBlank() && !busy, onClick = { val t = paste; run("Import pasted SKILL.md") { state.skillImporter.importFromContent(t) }; paste = "" }) { Text("Import pasted") }
+        label = { Text(tr("skills.paste_label")) })
+    OutlinedButton(enabled = paste.isNotBlank() && !busy, onClick = { val t = paste; run(tr("skills.op.paste")) { state.skillImporter.importFromContent(t) }; paste = "" }) { Text(tr("skills.import_pasted")) }
     if (busy) LinearProgressIndicator(Modifier.fillMaxWidth().padding(vertical = 4.dp))
     message?.let { (t, err) ->
         Text(t, style = MaterialTheme.typography.bodySmall, color = if (err) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary)
@@ -99,16 +101,16 @@ private fun SkillRow(sk: Skill, enabled: Boolean, onToggle: (Boolean) -> Unit, o
                 TextButton(onClick = { open = !open }, modifier = Modifier.weight(1f)) {
                     Text("${if (open) "▾" else "▸"} ${sk.name} — ${sk.description.take(90)}", Modifier.fillMaxWidth(), maxLines = 1)
                 }
-                IconButton(onClick = onOpen) { Icon(Icons.Default.FolderOpen, "Open skill folder") }
-                IconButton(onClick = { confirmDelete = true }) { Icon(Icons.Default.Delete, "Delete skill") }
+                IconButton(onClick = onOpen) { Icon(Icons.Default.FolderOpen, tr("skills.open_one")) }
+                IconButton(onClick = { confirmDelete = true }) { Icon(Icons.Default.Delete, tr("skills.delete_one")) }
             }
             if (confirmDelete) Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Delete the folder ${sk.dir.absolutePath}?", style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
-                TextButton(onClick = { confirmDelete = false }) { Text("Keep") }
-                TextButton(onClick = { confirmDelete = false; onDelete() }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
+                Text(tr("skills.delete_q", sk.dir.absolutePath), style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+                TextButton(onClick = { confirmDelete = false }) { Text(tr("common.keep")) }
+                TextButton(onClick = { confirmDelete = false; onDelete() }) { Text(tr("common.delete"), color = MaterialTheme.colorScheme.error) }
             }
             if (open) {
-                Text("Version ${sk.version} · ${sk.file.absolutePath}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(tr("skills.version", sk.version, sk.file.absolutePath), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text(sk.description, style = MaterialTheme.typography.bodySmall)
                 Text(sk.body.take(1500) + if (sk.body.length > 1500) "\n…" else "", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp))
             }
@@ -119,8 +121,8 @@ private fun SkillRow(sk: Skill, enabled: Boolean, onToggle: (Boolean) -> Unit, o
 private fun pickFile(dirs: Boolean): File? {
     val fc = JFileChooser().apply {
         fileSelectionMode = if (dirs) JFileChooser.DIRECTORIES_ONLY else JFileChooser.FILES_ONLY
-        if (!dirs) fileFilter = FileNameExtensionFilter("Skill (.zip, .skill, SKILL.md)", "zip", "skill", "md")
-        dialogTitle = if (dirs) "Choose a skill folder (contains SKILL.md)" else "Choose a skill archive or SKILL.md"
+        if (!dirs) fileFilter = FileNameExtensionFilter(tr("skills.filter"), "zip", "skill", "md")
+        dialogTitle = if (dirs) tr("skills.choose_folder") else tr("skills.choose_file")
     }
     return if (fc.showOpenDialog(null) == JFileChooser.APPROVE_OPTION) fc.selectedFile else null
 }

@@ -7,6 +7,8 @@
 // Copyright (C) OpenMinis contributors. Licensed under the GNU GPL v3 (see LICENSE).
 package com.openminis.desktop.tools
 
+import com.openminis.desktop.i18n.tr
+
 import com.openminis.app.data.model.AgentToolDefinition
 import com.openminis.app.data.model.AgentToolParam
 import com.openminis.desktop.core.AppSettings
@@ -199,14 +201,14 @@ class ToolRegistry(
         if (needsApproval(cmd, s, verdict)) {
             val remember = CommandGuard.mayBeRememberedForSession(cmd)
             val why = when {
-                CommandGuard.hasMetacharacters(cmd) -> " (contains shell operators: redirection, pipes, chaining or substitution)"
-                CommandGuard.isInterpreter(cmd) -> " (starts an interpreter)"
-                else -> ""
+                CommandGuard.hasMetacharacters(cmd) -> "approval.shell.meta"
+                CommandGuard.isInterpreter(cmd) -> "approval.shell.interp"
+                else -> "approval.shell"
             }
             val ok = approver.approve(ApprovalRequest(
-                "shell", "Run ${s.shell.label} command$why", cmd,
+                "shell", tr(why, s.shell.label), cmd,
                 onAlwaysAllow = if (remember) ({ SessionShellApprovals.add(cmd) }) else null,
-                rememberLabel = if (remember) "Allow for this session" else null,
+                rememberLabel = if (remember) tr("approval.session") else null,
             ))
             if (!ok) return ToolOutcome("The user declined to run this command.", isError = true, denied = true)
         }

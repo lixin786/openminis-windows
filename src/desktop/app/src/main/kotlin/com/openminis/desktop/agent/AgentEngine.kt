@@ -9,6 +9,8 @@
 // Copyright (C) OpenMinis contributors. Licensed under the GNU GPL v3 (see LICENSE).
 package com.openminis.desktop.agent
 
+import com.openminis.desktop.i18n.tr
+
 import com.openminis.app.agent.Level
 import com.openminis.app.agent.ToolLoopDetector
 import com.openminis.app.data.ContextOverflowGuard
@@ -155,7 +157,7 @@ class AgentEngine(
         val chain = FallbackChain(
             settings, providerFactory, retryDelaysMs,
             onNotice = { notices += it; emit(true) },
-            onRetry = { a, max, why -> listener.onStatus("$why — retrying ($a/$max)…") },
+            onRetry = { a, max, why -> listener.onStatus(tr("status.retrying", why, a, max)) },
         )
         try {
             val toolDefs = if (settings.toolsEnabled) tools.definitions() else emptyList()
@@ -385,7 +387,7 @@ class AgentEngine(
     ): CompactOutcome {
         val full = mapper.toLLMMessages(history)
         val chain = FallbackChain(settings, providerFactory, retryDelaysMs,
-            onRetry = { a, max, why -> listener.onStatus("$why — retrying ($a/$max)…") })
+            onRetry = { a, max, why -> listener.onStatus(tr("status.retrying", why, a, max)) })
         return try {
             compactInternal(full, null, settings, ctx, chain, listener, automatic = false)
         } finally {
@@ -419,7 +421,7 @@ class AgentEngine(
         val prev = ctx.latestMarker
         val plan = Compaction.plan(full, prev, anchorOverride)
             ?: return CompactOutcome.Skipped(if (prev != null) "Already compacted up to this point." else "Nothing to compact yet.")
-        listener.onStatus("Compacting context (${plan.messages.size} messages)…")
+        listener.onStatus(tr("status.compacting_n", plan.messages.size))
         AppLogger.info(TAG, "[Compact] starting: ${plan.messages.size} entries [${plan.startIdx}..${plan.anchorIdx}] automatic=$automatic")
         var summary: String
         while (true) {

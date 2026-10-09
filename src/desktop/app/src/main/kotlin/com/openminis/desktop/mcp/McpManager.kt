@@ -5,6 +5,8 @@
 // Copyright (C) OpenMinis contributors. Licensed under the GNU GPL v3 (see LICENSE).
 package com.openminis.desktop.mcp
 
+import com.openminis.desktop.i18n.tr
+
 import com.openminis.app.data.model.AgentToolDefinition
 import com.openminis.app.data.model.AgentToolParam
 import com.openminis.app.logging.AppLogger
@@ -126,11 +128,11 @@ class McpManager(
             if (s.env.isNotEmpty()) appendLine("env: ${s.env.keys.joinToString(", ")}")
         }.trim()
         val v = trustVerdict(s)
-        val summary = if (v.persistable) "Start MCP server «${s.name}» (runs a program on this computer)"
-            else "Start MCP server «${s.name}» (runs a program on this computer; asked on every start: ${v.reason})"
+        val summary = if (v.persistable) tr("approval.mcp.start", s.name)
+            else tr("approval.mcp.start_every", s.name, v.reason)
         val ok = approver.approve(ApprovalRequest("mcp", summary, detail,
             onAlwaysAllow = if (v.persistable) ({ trustPermanently(s) }) else null,
-            rememberLabel = if (v.persistable) "Always allow this exact command line" else null))
+            rememberLabel = if (v.persistable) tr("approval.mcp.always_cmd") else null))
         if (ok && v.persistable) sessionTrust[s.name] = s.launchFingerprint()
         return ok
     }
@@ -240,9 +242,9 @@ class McpManager(
         val t = allTools().firstOrNull { it.exposedName == exposedName }
             ?: return ToolOutcome("Error: unknown MCP tool $exposedName", isError = true)
         val s = servers.firstOrNull { it.name == t.server } ?: return ToolOutcome("Error: MCP server ${t.server} was removed", isError = true)
-        if (s.confirmToolCalls && !approver.approve(ApprovalRequest("mcp", "Call MCP tool «${t.name}» on «${s.name}»", args.toString(2).take(4000),
+        if (s.confirmToolCalls && !approver.approve(ApprovalRequest("mcp", tr("approval.mcp.call", t.name, s.name), args.toString(2).take(4000),
                 onAlwaysAllow = { setServers(servers.map { if (it.name == s.name) it.copy(confirmToolCalls = false) else it }) },
-                rememberLabel = "Always allow this server's tools"))) {
+                rememberLabel = tr("approval.mcp.always_tools")))) {
             return ToolOutcome("The user denied this MCP tool call.", isError = true, denied = true)
         }
         var attempt = 0

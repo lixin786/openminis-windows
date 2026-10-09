@@ -5,6 +5,8 @@
 // Copyright (C) OpenMinis contributors. Licensed under the GNU GPL v3 (see LICENSE).
 package com.openminis.desktop.scheduled
 
+import com.openminis.desktop.i18n.tr
+
 import com.openminis.app.data.model.AgentToolDefinition
 import com.openminis.app.data.model.AgentToolParam
 import com.openminis.app.data.model.ThinkingLevel
@@ -119,6 +121,8 @@ class ScheduledToolbox(
     private val approver: ToolApprover,
     private val currentConversation: () -> String?,
     private val describe: (ScheduledTask) -> String = { it.label },
+    /** The same description in the UI language, for the approval dialog. */
+    private val describeUi: (ScheduledTask) -> String = describe,
 ) : Toolbox {
     override fun definitions(): List<AgentToolDefinition> = inner.definitions() + ScheduledToolSpec.definition
     override fun runsConcurrently(name: String) = inner.runsConcurrently(name)
@@ -143,8 +147,8 @@ class ScheduledToolbox(
                 }
                 "create" -> {
                     val t = ScheduledToolSpec.buildTask(args, currentConversation()) { raw -> resolve(raw)?.id }
-                    val ok = approver.approve(ApprovalRequest("scheduled", "Create scheduled task «${t.label}» (${describe(t)})",
-                        "Runs on its own: ${describe(t)}\nWhere: ${if (t.targetMode is ScheduledTargetMode.NewSession) "a new chat each time" else "follow-up in this chat"}\n\nPrompt:\n${t.prompt}"))
+                    val ok = approver.approve(ApprovalRequest("scheduled", tr("approval.scheduled.create", t.label, describeUi(t)),
+                        tr("approval.scheduled.detail", describeUi(t), tr(if (t.targetMode is ScheduledTargetMode.NewSession) "scheduled.where.new" else "scheduled.where.follow"), t.prompt)))
                     if (!ok) return ToolOutcome("The user declined to create this scheduled task.", isError = true, denied = true)
                     val saved = scheduler.save(t)
                     ToolOutcome(JSONObject().put("ok", true).put("id", saved.id).put("label", saved.label).put("trigger", describe(saved))

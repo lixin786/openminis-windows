@@ -6,6 +6,9 @@
 // Copyright (C) OpenMinis contributors. Licensed under the GNU GPL v3 (see LICENSE).
 package com.openminis.desktop.ui
 
+import com.openminis.desktop.i18n.I18n
+import com.openminis.desktop.i18n.tr
+
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -40,25 +43,28 @@ private val WHEN_FMT: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-d
 internal fun fmtTime(ms: Long?): String = ms?.let { Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault()).format(WHEN_FMT) } ?: "—"
 
 /** Short human description of a task's trigger (list row). */
-internal fun describeTrigger(t: ScheduledTask, labelOf: (String) -> String): String = when (t.triggerKind) {
-    ScheduledTriggerKind.AFTER -> "once, ${(t.delaySec ?: 0) / 60} min after it was saved"
-    ScheduledTriggerKind.INTERVAL -> "every ${(t.intervalSec ?: 0) / 60} min" + (t.maxFires?.let { ", ${t.triggeredCount ?: 0}/$it done" } ?: "")
-    ScheduledTriggerKind.ON_COMPLETION -> "when «${t.onCompletionOf?.let(labelOf) ?: "?"}» finishes"
+/** [lang] "en" for what the model reads (scheduled_task list), the UI language otherwise. */
+internal fun describeTrigger(t: ScheduledTask, lang: String = I18n.active, labelOf: (String) -> String): String = when (t.triggerKind) {
+    ScheduledTriggerKind.AFTER -> I18n.tr("sched.trigger.after", (t.delaySec ?: 0) / 60, lang = lang)
+    ScheduledTriggerKind.INTERVAL -> I18n.tr("sched.trigger.every", (t.intervalSec ?: 0) / 60, lang = lang) +
+        (t.maxFires?.let { I18n.tr("sched.trigger.every_done", t.triggeredCount ?: 0, it, lang = lang) } ?: "")
+    ScheduledTriggerKind.ON_COMPLETION -> I18n.tr("sched.trigger.after_task", t.onCompletionOf?.let(labelOf) ?: "?", lang = lang)
     ScheduledTriggerKind.CALENDAR -> "%02d:%02d ".format(t.timeOfDayHour, t.timeOfDayMinute) + when (t.repeatMode) {
-        ScheduledRepeatMode.ONCE -> "once"
-        ScheduledRepeatMode.DAILY -> "every day"
-        ScheduledRepeatMode.WEEKDAYS -> "Mon–Fri"
-        ScheduledRepeatMode.CUSTOM -> DAYS.filter { it.first in t.customDays }.joinToString(" ") { it.second }
+        ScheduledRepeatMode.ONCE -> I18n.tr("sched.repeat.once_short", lang = lang)
+        ScheduledRepeatMode.DAILY -> I18n.tr("sched.repeat.daily_short", lang = lang)
+        ScheduledRepeatMode.WEEKDAYS -> I18n.tr("sched.repeat.weekdays_short", lang = lang)
+        ScheduledRepeatMode.CUSTOM -> DAYS.filter { it.first in t.customDays }.joinToString(" ") { I18n.tr("day." + it.second, lang = lang) }
     }
 }
 
-private val DAYS = listOf(Calendar.MONDAY to "Mon", Calendar.TUESDAY to "Tue", Calendar.WEDNESDAY to "Wed", Calendar.THURSDAY to "Thu",
-    Calendar.FRIDAY to "Fri", Calendar.SATURDAY to "Sat", Calendar.SUNDAY to "Sun")
+/** Calendar day → i18n key suffix (day.MONDAY …). */
+private val DAYS = listOf(Calendar.MONDAY to "MONDAY", Calendar.TUESDAY to "TUESDAY", Calendar.WEDNESDAY to "WEDNESDAY", Calendar.THURSDAY to "THURSDAY",
+    Calendar.FRIDAY to "FRIDAY", Calendar.SATURDAY to "SATURDAY", Calendar.SUNDAY to "SUNDAY")
 
 @Composable
 fun ScheduledTasksWindow(state: AppState, onClose: () -> Unit) {
     var editing by remember { mutableStateOf<ScheduledTask?>(null) }
-    DialogWindow(onCloseRequest = onClose, title = "Scheduled tasks", state = rememberFittedDialogState(820.dp, 680.dp), resizable = true,
+    DialogWindow(onCloseRequest = onClose, title = tr("sched.window"), state = rememberFittedDialogState(820.dp, 680.dp), resizable = true,
         onPreviewKeyEvent = { ev -> if (ev.type == KeyEventType.KeyDown && ev.key == Key.Escape) { if (editing != null) editing = null else onClose(); true } else false }) {
         MinisTheme(state.settings.darkTheme) {
             Surface(Modifier.fillMaxSize()) {
@@ -72,12 +78,12 @@ fun ScheduledTasksWindow(state: AppState, onClose: () -> Unit) {
                         TaskEditor(state, e, tasks, onSave = { state.scheduler.save(it); editing = null }, onCancel = { editing = null })
                     } else {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("Tasks run a prompt on a schedule. Shell commands they run still ask for approval when confirmation is on.",
+                            Text(tr("sched.intro"),
                                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
-                            Button(onClick = { editing = ScheduledTask(label = "", timeOfDayHour = 9, timeOfDayMinute = 0, repeatMode = ScheduledRepeatMode.DAILY, prompt = "") }) { Text("New task") }
+                            Button(onClick = { editing = ScheduledTask(label = "", timeOfDayHour = 9, timeOfDayMinute = 0, repeatMode = ScheduledRepeatMode.DAILY, prompt = "") }) { Text(tr("sched.new")) }
                         }
                         Spacer(Modifier.height(8.dp))
-                        if (tasks.isEmpty()) Text("No scheduled tasks yet.", style = MaterialTheme.typography.bodyMedium)
+                        if (tasks.isEmpty()) Text(tr("sched.empty"), style = MaterialTheme.typography.bodyMedium)
                         tasks.sortedBy { state.scheduler.nextFire(it) ?: Long.MAX_VALUE }.forEach { t ->
                             TaskRow(state, t, tasks, onEdit = { editing = t }, onClose = onClose)
                         }
@@ -101,29 +107,29 @@ private fun TaskRow(state: AppState, t: ScheduledTask, all: List<ScheduledTask>,
                 Column(Modifier.weight(1f)) {
                     Text(t.label.ifBlank { t.prompt.take(40) }, style = MaterialTheme.typography.titleSmall)
                     Text(describeTrigger(t) { id -> all.firstOrNull { it.id == id }?.label ?: id } + " · " +
-                        (if (running) "running now" else "next: " + fmtTime(state.scheduler.nextFire(t))) + " · runs: ${t.firesSoFar}" +
-                        " · " + (if (t.targetMode is ScheduledTargetMode.NewSession) "new chat" else "follow-up in a chat"),
+                        (if (running) tr("sched.running_now") else tr("sched.next", fmtTime(state.scheduler.nextFire(t)))) + tr("sched.runs_count", t.firesSoFar) +
+                        " · " + (if (t.targetMode is ScheduledTargetMode.NewSession) tr("sched.target.new") else tr("sched.target.follow")),
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                IconButton(onClick = { state.scheduler.runNow(t.id) }, enabled = !running) { Icon(Icons.Default.PlayArrow, "Run now") }
-                IconButton(onClick = onEdit) { Icon(Icons.Default.Edit, "Edit task") }
-                IconButton(onClick = { confirmDelete = true }) { Icon(Icons.Default.Delete, "Delete task") }
-                TextButton(onClick = { open = !open }) { Text(if (open) "Hide runs" else "Runs") }
+                IconButton(onClick = { state.scheduler.runNow(t.id) }, enabled = !running) { Icon(Icons.Default.PlayArrow, tr("sched.run_now")) }
+                IconButton(onClick = onEdit) { Icon(Icons.Default.Edit, tr("sched.edit")) }
+                IconButton(onClick = { confirmDelete = true }) { Icon(Icons.Default.Delete, tr("sched.delete_one")) }
+                TextButton(onClick = { open = !open }) { Text(if (open) tr("sched.hide_runs") else tr("sched.runs")) }
             }
             if (confirmDelete) Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Delete «${t.label}»? Its chats are kept.", style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
-                TextButton(onClick = { confirmDelete = false }) { Text("Keep") }
-                TextButton(onClick = { confirmDelete = false; state.scheduler.delete(t.id) }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
+                Text(tr("sched.delete_q", t.label), style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+                TextButton(onClick = { confirmDelete = false }) { Text(tr("common.keep")) }
+                TextButton(onClick = { confirmDelete = false; state.scheduler.delete(t.id) }) { Text(tr("common.delete"), color = MaterialTheme.colorScheme.error) }
             }
             if (open) {
-                if (t.runHistory.isEmpty()) Text("No runs yet.", style = MaterialTheme.typography.bodySmall)
+                if (t.runHistory.isEmpty()) Text(tr("sched.no_runs"), style = MaterialTheme.typography.bodySmall)
                 t.runHistory.take(20).forEach { r ->
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text((if (r.ok) "✓ " else "✗ ") + fmtTime(r.firedAt) + "  " + (r.preview ?: "").replace('\n', ' ').take(120),
                             style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f),
                             color = if (r.ok) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.error)
                         val sid = r.sessionId
-                        if (sid != null && state.conversations.any { it.id == sid }) TextButton(onClick = { state.select(sid); onClose() }) { Text("Open chat") }
+                        if (sid != null && state.conversations.any { it.id == sid }) TextButton(onClick = { state.select(sid); onClose() }) { Text(tr("sched.open_chat")) }
                     }
                 }
             }
@@ -131,7 +137,8 @@ private fun TaskRow(state: AppState, t: ScheduledTask, all: List<ScheduledTask>,
     }
 }
 
-private enum class TriggerChoice(val label: String) { TIME("At a time of day"), AFTER("Once, after a delay"), INTERVAL("Every N minutes"), AFTER_TASK("When another task finishes") }
+private enum class TriggerChoice { TIME, AFTER, INTERVAL, AFTER_TASK;
+    val label: String get() = tr("sched.choice.$name") }
 
 @Composable
 private fun TaskEditor(state: AppState, initial: ScheduledTask, all: List<ScheduledTask>, onSave: (ScheduledTask) -> Unit, onCancel: () -> Unit) {
@@ -146,70 +153,70 @@ private fun TaskEditor(state: AppState, initial: ScheduledTask, all: List<Schedu
     var minutes by remember(initial.id) { mutableStateOf(((initial.delaySec ?: initial.intervalSec ?: 3600L) / 60).toInt()) }
     var count by remember(initial.id) { mutableStateOf(initial.maxFires ?: 0) }
 
-    Text(if (all.any { it.id == initial.id }) "Edit task" else "New task", style = MaterialTheme.typography.titleMedium)
-    OutlinedTextField(t.label, { t = t.copy(label = it) }, label = { Text("Name") }, singleLine = true, modifier = Modifier.fillMaxWidth().tabMovesFocus())
-    OutlinedTextField(t.prompt, { t = t.copy(prompt = it) }, label = { Text("Prompt (what the agent should do each time)") }, minLines = 4, modifier = Modifier.fillMaxWidth())
+    Text(if (all.any { it.id == initial.id }) tr("sched.edit") else tr("sched.new"), style = MaterialTheme.typography.titleMedium)
+    OutlinedTextField(t.label, { t = t.copy(label = it) }, label = { Text(tr("common.name")) }, singleLine = true, modifier = Modifier.fillMaxWidth().tabMovesFocus())
+    OutlinedTextField(t.prompt, { t = t.copy(prompt = it) }, label = { Text(tr("sched.prompt")) }, minLines = 4, modifier = Modifier.fillMaxWidth())
 
-    Row(verticalAlignment = Alignment.CenterVertically) { Text("When:", Modifier.width(120.dp)); Dropdown(trigger, TriggerChoice.entries, { it.label }, { trigger = it }) }
+    Row(verticalAlignment = Alignment.CenterVertically) { Text(tr("sched.when"), Modifier.width(120.dp)); Dropdown(trigger, TriggerChoice.entries, { it.label }, { trigger = it }) }
     when (trigger) {
         TriggerChoice.TIME -> {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                OutlinedTextField(timeText, { timeText = it }, label = { Text("Time (HH:MM, 24h)") }, singleLine = true, modifier = Modifier.width(170.dp).tabMovesFocus())
+                OutlinedTextField(timeText, { timeText = it }, label = { Text(tr("sched.time")) }, singleLine = true, modifier = Modifier.width(170.dp).tabMovesFocus())
                 Spacer(Modifier.width(12.dp))
-                Dropdown(t.repeatMode, ScheduledRepeatMode.entries, { when (it) { ScheduledRepeatMode.ONCE -> "Once"; ScheduledRepeatMode.DAILY -> "Every day"; ScheduledRepeatMode.WEEKDAYS -> "Weekdays (Mon–Fri)"; ScheduledRepeatMode.CUSTOM -> "Chosen days" } },
+                Dropdown(t.repeatMode, ScheduledRepeatMode.entries, { tr("sched.repeat.${it.name}") },
                     { t = t.copy(repeatMode = it) })
             }
             if (t.repeatMode == ScheduledRepeatMode.CUSTOM) Row {
                 DAYS.forEach { (d, name) ->
                     FilterChip(selected = d in t.customDays, onClick = { t = t.copy(customDays = if (d in t.customDays) t.customDays - d else t.customDays + d) },
-                        label = { Text(name) }, modifier = Modifier.padding(end = 4.dp))
+                        label = { Text(tr("day.$name")) }, modifier = Modifier.padding(end = 4.dp))
                 }
             }
             Row {
-                OutlinedTextField(startText, { startText = it }, label = { Text("From date (YYYY-MM-DD, optional)") }, singleLine = true, modifier = Modifier.weight(1f).tabMovesFocus())
+                OutlinedTextField(startText, { startText = it }, label = { Text(tr("sched.from")) }, singleLine = true, modifier = Modifier.weight(1f).tabMovesFocus())
                 Spacer(Modifier.width(8.dp))
-                OutlinedTextField(endText, { endText = it }, label = { Text("Until date (optional)") }, singleLine = true, modifier = Modifier.weight(1f).tabMovesFocus())
+                OutlinedTextField(endText, { endText = it }, label = { Text(tr("sched.until")) }, singleLine = true, modifier = Modifier.weight(1f).tabMovesFocus())
             }
         }
-        TriggerChoice.AFTER -> NumberField("Minutes from now", minutes, Modifier.fillMaxWidth()) { minutes = it }
+        TriggerChoice.AFTER -> NumberField(tr("sched.minutes_from_now"), minutes, Modifier.fillMaxWidth()) { minutes = it }
         TriggerChoice.INTERVAL -> {
-            NumberField("Every N minutes (at least 1)", minutes, Modifier.fillMaxWidth()) { minutes = it }
-            NumberField("Number of runs (0 = until deleted)", count, Modifier.fillMaxWidth()) { count = it }
+            NumberField(tr("sched.every_n"), minutes, Modifier.fillMaxWidth()) { minutes = it }
+            NumberField(tr("sched.count"), count, Modifier.fillMaxWidth()) { count = it }
         }
         TriggerChoice.AFTER_TASK -> {
             val others = all.filter { it.id != t.id }
-            if (others.isEmpty()) Text("Create another task first.", style = MaterialTheme.typography.bodySmall)
+            if (others.isEmpty()) Text(tr("sched.create_first"), style = MaterialTheme.typography.bodySmall)
             else Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("After:", Modifier.width(120.dp))
-                Dropdown(others.firstOrNull { it.id == t.onCompletionOf }, others, { it?.label?.ifBlank { it.prompt.take(30) } ?: "choose a task" }, { t = t.copy(onCompletionOf = it?.id) })
+                Text(tr("sched.after"), Modifier.width(120.dp))
+                Dropdown(others.firstOrNull { it.id == t.onCompletionOf }, others, { it?.label?.ifBlank { it.prompt.take(30) } ?: tr("sched.choose_task") }, { t = t.copy(onCompletionOf = it?.id) })
             }
-            Text("Use ${ScheduledTask.RESULT_PLACEHOLDER} in the prompt to insert that task's answer. Runs once.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(tr("sched.placeholder_hint", ScheduledTask.RESULT_PLACEHOLDER), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 
     val chats = state.conversations.filter { it.messages.isNotEmpty() }
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Text("Where:", Modifier.width(120.dp))
+        Text(tr("sched.where"), Modifier.width(120.dp))
         val current = (t.targetMode as? ScheduledTargetMode.AppendToSession)?.sessionId
-        Dropdown(current, listOf<String?>(null) + chats.map { it.id }, { id -> if (id == null) "A new chat each time" else "Follow-up in «" + (chats.firstOrNull { it.id == id }?.title ?: "deleted chat") + "»" },
+        Dropdown(current, listOf<String?>(null) + chats.map { it.id }, { id -> if (id == null) tr("sched.where.new") else tr("sched.where.follow", chats.firstOrNull { it.id == id }?.title ?: tr("sched.deleted_chat")) },
             { t = t.copy(targetMode = if (it == null) ScheduledTargetMode.NewSession else ScheduledTargetMode.AppendToSession(it)) })
     }
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Text("Model:", Modifier.width(120.dp))
+        Text(tr("common.model"), Modifier.width(120.dp))
         val options = listOf<String?>(null) + state.settings.modelChain().map { "${it.provider.name}/${it.model}" }
-        Dropdown(t.modelId, (options + t.modelId).distinct(), { it ?: "Active model" }, { t = t.copy(modelId = it) })
+        Dropdown(t.modelId, (options + t.modelId).distinct(), { it ?: tr("sched.active_model") }, { t = t.copy(modelId = it) })
         Spacer(Modifier.width(12.dp))
-        Dropdown(t.thinkingLevel, listOf<ThinkingLevel?>(null) + ThinkingLevel.entries, { it?.name?.let { n -> "Reasoning: $n" } ?: "Reasoning: as in Settings" }, { t = t.copy(thinkingLevel = it) })
+        Dropdown(t.thinkingLevel, listOf<ThinkingLevel?>(null) + ThinkingLevel.entries, { it?.name?.let { n -> tr("sched.reasoning", I18n.trOr("thinking.$n", n)) } ?: tr("sched.reasoning_default") }, { t = t.copy(thinkingLevel = it) })
     }
-    Toggle("Enabled", t.enabled) { t = t.copy(enabled = it) }
+    Toggle(tr("common.enabled"), t.enabled) { t = t.copy(enabled = it) }
     error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
     Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.End) {
-        TextButton(onClick = onCancel) { Text("Cancel (Esc)") }
+        TextButton(onClick = onCancel) { Text(tr("common.cancel_esc")) }
         Spacer(Modifier.width(8.dp))
         Button(onClick = {
             val r = ScheduledEditorRules.build(t, trigger.name, timeText, startText, endText, minutes, count)
             r.onSuccess(onSave).onFailure { error = it.message }
-        }) { Text("Save") }
+        }) { Text(tr("common.save")) }
     }
 }
 
@@ -218,34 +225,34 @@ object ScheduledEditorRules {
     private val TIME_RE = Regex("""^\s*(\d{1,2})\s*[:：]\s*(\d{2})\s*$""")
 
     fun build(t: ScheduledTask, trigger: String, timeText: String, startText: String, endText: String, minutes: Int, count: Int): Result<ScheduledTask> = runCatching {
-        require(t.prompt.isNotBlank()) { "The prompt is empty." }
+        require(t.prompt.isNotBlank()) { tr("sched.err.prompt_empty") }
         val label = t.label.ifBlank { t.prompt.lines().first().take(40) }
         fun date(s: String, what: String): Long? = s.trim().takeIf { it.isNotEmpty() }?.let {
-            runCatching { LocalDate.parse(it).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli() }.getOrElse { throw IllegalArgumentException("$what must look like 2026-10-31.") }
+            runCatching { LocalDate.parse(it).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli() }.getOrElse { throw IllegalArgumentException(tr("sched.err.date", what)) }
         }
         when (trigger) {
             "TIME" -> {
-                val m = TIME_RE.matchEntire(timeText) ?: throw IllegalArgumentException("Time must be HH:MM, e.g. 09:00.")
+                val m = TIME_RE.matchEntire(timeText) ?: throw IllegalArgumentException(tr("sched.err.time_format"))
                 val h = m.groupValues[1].toInt(); val mi = m.groupValues[2].toInt()
-                require(h in 0..23 && mi in 0..59) { "Time must be between 00:00 and 23:59." }
-                require(t.repeatMode != ScheduledRepeatMode.CUSTOM || t.customDays.isNotEmpty()) { "Choose at least one day." }
-                val start = date(startText, "From date"); val end = date(endText, "Until date")
-                require(start == null || end == null || end >= start) { "Until date is before From date." }
+                require(h in 0..23 && mi in 0..59) { tr("sched.err.time_range") }
+                require(t.repeatMode != ScheduledRepeatMode.CUSTOM || t.customDays.isNotEmpty()) { tr("sched.err.day") }
+                val start = date(startText, tr("sched.err.from")); val end = date(endText, tr("sched.err.until"))
+                require(start == null || end == null || end >= start) { tr("sched.err.order") }
                 t.copy(label = label, triggerKind = ScheduledTriggerKind.CALENDAR, timeOfDayHour = h, timeOfDayMinute = mi, startDateMs = start, endDateMs = end,
                     delaySec = null, intervalSec = null, maxFires = null, onCompletionOf = null)
             }
-            "AFTER" -> { require(minutes >= 1) { "At least 1 minute." }
+            "AFTER" -> { require(minutes >= 1) { tr("sched.err.min1") }
                 t.copy(label = label, triggerKind = ScheduledTriggerKind.AFTER, delaySec = minutes * 60L, intervalSec = null, maxFires = null, onCompletionOf = null) }
-            "INTERVAL" -> { require(minutes >= 1) { "At least every 1 minute." }
+            "INTERVAL" -> { require(minutes >= 1) { tr("sched.err.every1") }
                 t.copy(label = label, triggerKind = ScheduledTriggerKind.INTERVAL, intervalSec = minutes * 60L, maxFires = count.takeIf { it > 0 }, delaySec = null, onCompletionOf = null) }
-            "AFTER_TASK" -> { require(!t.onCompletionOf.isNullOrBlank()) { "Choose the task to wait for." }
+            "AFTER_TASK" -> { require(!t.onCompletionOf.isNullOrBlank()) { tr("sched.err.choose") }
                 t.copy(label = label, triggerKind = ScheduledTriggerKind.ON_COMPLETION, delaySec = null, intervalSec = null, maxFires = null) }
             else -> throw IllegalArgumentException("Unknown trigger $trigger")
         }
     }
 }
 
-/** [batch3 follow-up] Shown at the top of the task list and of the create / edit form. */
+/** [batch3 follow-up] Shown at the top of the task list and of the create / edit form (English text; the UI shows tr("sched.runs_only_open")). */
 const val RUNS_ONLY_WHILE_OPEN_NOTE =
     "Tasks run only while OpenMinis is open. If the app is closed at the scheduled time, that run is skipped " +
         "(delayed / interval tasks catch up once on next launch)."
@@ -253,7 +260,7 @@ const val RUNS_ONLY_WHILE_OPEN_NOTE =
 @Composable
 private fun RunsOnlyWhileOpenNote() {
     Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = MaterialTheme.shapes.small, modifier = Modifier.fillMaxWidth()) {
-        Text("ⓘ " + RUNS_ONLY_WHILE_OPEN_NOTE, style = MaterialTheme.typography.bodyMedium,
+        Text("ⓘ " + tr("sched.runs_only_open"), style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSecondaryContainer, modifier = Modifier.padding(10.dp))
     }
 }

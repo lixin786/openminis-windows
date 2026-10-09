@@ -174,6 +174,15 @@ symlink 不得逃逸（`~/link -> /tmp` 这类）；目标不存在时解析最�
 
 
 
+### 汉化完成情况（batch5，2026-10-09）
+
+- 新增 `i18n/I18n.kt` + `resources/i18n/{en,zh-CN,zh-TW}.properties`（UTF-8，341 个 key，占位符 `{0}`）。
+- 设置 › 语言：跟随系统 / English / 简体中文 / 繁體中文，保存后即时切换；跟随系统时 zh-TW/HK/MO 或 Hant → 繁體，其余中文 → 简体，其他 → English。
+- 已汉化：菜单栏、侧栏、对话区、输入框、审批对话框（Shell / MCP / 定时任务的摘要与按钮、MCP 信任原因）、设置全部分区、Skills、MCP、子代理、定时任务窗口与校验提示、toast 与状态行。
+- 术语沿用上游 values-zh / values-zh-rTW（定时任务/排程工作、子代理、技能、始终允许/一律允許、压缩/壓縮 …）。
+- 给模型的内容（工具说明、工具结果、scheduled_task 列表的 trigger 描述）保持英文。
+- `I18nTest`：三语 key 一致、占位符一致、中文无漏译、系统语言映射、源码引用的 key 都存在、UI 无残留硬编码英文、旧 settings.json 兼容。
+
 ## 构建
 
 ```bash
