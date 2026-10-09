@@ -63,6 +63,11 @@ data class AppSettings(
     val memoryEnabled: Boolean = true,
     val skillsEnabled: Boolean = true,
     val darkTheme: Boolean? = null,
+    /** Appearance (ui/Appearance): accent palette id, text size factor, UI / code font family ("" = built-in default). */
+    val accent: String = "indigo",
+    val fontScale: Float = 1f,
+    val uiFont: String = "",
+    val monoFont: String = "",
     /** UI language: "system" (follow Windows), "en", "zh-CN", "zh-TW" — see i18n/AppLanguage. */
     val language: String = "system",
     /**

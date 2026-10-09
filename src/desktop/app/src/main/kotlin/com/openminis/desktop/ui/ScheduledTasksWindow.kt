@@ -66,7 +66,7 @@ fun ScheduledTasksWindow(state: AppState, onClose: () -> Unit) {
     var editing by remember { mutableStateOf<ScheduledTask?>(null) }
     DialogWindow(onCloseRequest = onClose, title = tr("sched.window"), state = rememberFittedDialogState(820.dp, 680.dp), resizable = true,
         onPreviewKeyEvent = { ev -> if (ev.type == KeyEventType.KeyDown && ev.key == Key.Escape) { if (editing != null) editing = null else onClose(); true } else false }) {
-        MinisTheme(state.settings.darkTheme) {
+        MinisTheme(state.settings) {
             Surface(Modifier.fillMaxSize()) {
                 @Suppress("UNUSED_VARIABLE") val tick = state.scheduledTick
                 val tasks = state.scheduler.list()

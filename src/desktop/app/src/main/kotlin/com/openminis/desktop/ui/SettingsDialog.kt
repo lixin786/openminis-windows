@@ -26,6 +26,14 @@ import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.selected
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.size
+import androidx.compose.material3.Surface
+import androidx.compose.runtime.remember
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.key.isCtrlPressed
@@ -59,7 +67,7 @@ fun SettingsDialog(state: AppState, onClose: () -> Unit) {
             }
         },
     ) {
-        MinisTheme(state.settings.darkTheme) {
+        MinisTheme(state.settings) {
             Surface(Modifier.fillMaxSize()) {
                 Column(Modifier.fillMaxSize()) {
                     ScrollColumn(Modifier.weight(1f).fillMaxWidth()) {
@@ -167,7 +175,7 @@ fun SettingsDialog(state: AppState, onClose: () -> Unit) {
                             Spacer(Modifier.width(12.dp))
                             NumberField(tr("settings.max_rounds"), draft.maxToolRounds, Modifier.weight(1f)) { draft = draft.copy(maxToolRounds = it.coerceIn(1, 500)) }
                         }
-                        Toggle(tr("settings.dark"), draft.darkTheme ?: false) { draft = draft.copy(darkTheme = it) }
+                        AppearanceSection(draft) { draft = it }
 
                         Section(tr("settings.tools"))
                         Toggle(tr("settings.tools_enable"), draft.toolsEnabled) { draft = draft.copy(toolsEnabled = it) }
@@ -229,6 +237,61 @@ fun SettingsDialog(state: AppState, onClose: () -> Unit) {
             }
         }
     }
+}
+
+/** Settings › Appearance: theme mode, accent, text size, UI font, code font, live preview. */
+@Composable private fun AppearanceSection(d: com.openminis.desktop.core.AppSettings, onChange: (com.openminis.desktop.core.AppSettings) -> Unit) {
+    val installed = remember {
+        runCatching { java.awt.GraphicsEnvironment.getLocalGraphicsEnvironment().availableFontFamilyNames.toList() }.getOrDefault(emptyList())
+    }
+    val fontLabel: (String) -> String = { if (it.isBlank()) tr("appearance.font_default") else it }
+    Section(tr("appearance.title"))
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(tr("appearance.theme"), Modifier.width(140.dp))
+        Dropdown(Appearance.ThemeMode.of(d.darkTheme), Appearance.ThemeMode.entries, { tr("appearance.theme.${it.name.lowercase()}") },
+            { onChange(d.copy(darkTheme = it.dark)) })
+    }
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 4.dp)) {
+        Text(tr("appearance.accent"), Modifier.width(140.dp))
+        val current = Appearance.Accent.of(d.accent)
+        Appearance.Accent.entries.forEach { a ->
+            val name = tr("appearance.accent.${a.id}")
+            Box(
+                Modifier.padding(end = 6.dp).size(26.dp)
+                    .background(androidx.compose.ui.graphics.Color(a.light), androidx.compose.foundation.shape.CircleShape)
+                    .border(if (a == current) 3.dp else 0.dp, MaterialTheme.colorScheme.onSurface, androidx.compose.foundation.shape.CircleShape)
+                    .clickable(role = androidx.compose.ui.semantics.Role.RadioButton) { onChange(d.copy(accent = a.id)) }
+                    .semantics { contentDescription = name; selected = a == current },
+            )
+        }
+        Spacer(Modifier.width(6.dp))
+        Text(tr("appearance.accent.${current.id}"), style = MaterialTheme.typography.bodySmall)
+    }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(tr("appearance.size"), Modifier.width(140.dp))
+        val cur = Appearance.SCALES.minByOrNull { kotlin.math.abs(it - Appearance.clampScale(d.fontScale)) } ?: 1f
+        Dropdown(cur, Appearance.SCALES, { "${Appearance.percent(it)} %" + if (it == 1f) tr("appearance.size_default") else "" },
+            { onChange(d.copy(fontScale = it)) })
+    }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(tr("appearance.ui_font"), Modifier.width(140.dp))
+        Dropdown(d.uiFont, Appearance.fontChoices(installed, Appearance.UI_RECOMMENDED, d.uiFont), fontLabel, { onChange(d.copy(uiFont = it)) })
+    }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(tr("appearance.mono_font"), Modifier.width(140.dp))
+        Dropdown(d.monoFont, Appearance.fontChoices(installed, Appearance.MONO_RECOMMENDED, d.monoFont), fontLabel, { onChange(d.copy(monoFont = it)) })
+    }
+    // Preview in the draft's settings (the dialog itself keeps the saved ones until Save).
+    MinisTheme(d) {
+        Surface(tonalElevation = 2.dp, shape = MaterialTheme.shapes.small, modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+            Column(Modifier.padding(10.dp)) {
+                Text(tr("appearance.preview_text"), style = MaterialTheme.typography.bodyMedium)
+                Text(Appearance.MONO_PREVIEW, fontFamily = LocalMonoFont.current,
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+            }
+        }
+    }
+    Hint(tr("appearance.hint"))
 }
 
 @Composable internal fun Section(title: String) {

@@ -67,6 +67,9 @@ fun main(args: Array<String>) {
             onPreviewKeyEvent = { ev ->
                 if (ev.type == KeyEventType.KeyDown && ev.isCtrlPressed) when (ev.key) {
                     Key.N -> { state.newChat(); true }
+                    Key.Equals, Key.Plus, Key.NumPadAdd -> { state.zoomText(+1); true }
+                    Key.Minus, Key.NumPadSubtract -> { state.zoomText(-1); true }
+                    Key.Zero, Key.NumPad0 -> { state.zoomText(0); true }
                     Key.Comma -> { state.showSettings = true; true }
                     else -> false
                 } else false
@@ -98,6 +101,11 @@ fun main(args: Array<String>) {
                     Item(tr("menu.open_data"), onClick = { state.openInExplorer(paths.root) })
                     Separator()
                     Item(tr("menu.exit"), onClick = { savePlacement(); state.shutdown(); exitApplication() })
+                }
+                Menu(tr("menu.view"), mnemonic = 'V') {
+                    Item(tr("menu.zoom_in") + "\tCtrl+=", onClick = { state.zoomText(+1) })
+                    Item(tr("menu.zoom_out") + "\tCtrl+-", onClick = { state.zoomText(-1) })
+                    Item(tr("menu.zoom_reset") + "\tCtrl+0", onClick = { state.zoomText(0) })
                 }
                 Menu(tr("menu.chat"), mnemonic = 'C') {
                     Item(tr("menu.stop"), enabled = state.isRunning, onClick = { state.stop() })

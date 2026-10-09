@@ -306,6 +306,12 @@ class AppState(val paths: AppPaths, private val scope: CoroutineScope) {
     val selected: Conversation? get() = conversations.firstOrNull { it.id == selectedId }
     val isRunning: Boolean get() = runningConversationId != null
 
+    /** Ctrl+= / Ctrl+- / Ctrl+0: text size one step up / down / back to 100 %. */
+    fun zoomText(dir: Int) {
+        val next = Appearance.step(settings.fontScale, dir)
+        if (next != settings.fontScale) updateSettings(settings.copy(fontScale = next))
+    }
+
     fun updateSettings(s: AppSettings) {
         if (s.language != settings.language) com.openminis.desktop.i18n.I18n.apply(s.language)
         if (s.network != settings.network) com.openminis.desktop.net.DesktopHttp.update(s.network)

@@ -127,7 +127,7 @@ fun App(state: AppState) {
             }
         }
     }
-    MinisTheme(state.settings.darkTheme) {
+    MinisTheme(state.settings) {
         Surface(
             Modifier.fillMaxSize().dragAndDropTarget(shouldStartDragAndDrop = { true }, target = dropTarget),
             color = MaterialTheme.colorScheme.background,
@@ -583,7 +583,7 @@ private fun McpChatRow(state: AppState, conv: Conversation, row: McpChatScope.Ro
             Text(it.take(300), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error, maxLines = 3, overflow = TextOverflow.Ellipsis)
         }
         if (showTools) tools.forEach { t ->
-            Text("· " + t.name, style = MaterialTheme.typography.labelSmall, fontFamily = FontFamily.Monospace,
+            Text("· " + t.name, style = MaterialTheme.typography.labelSmall, fontFamily = LocalMonoFont.current,
                 color = if (row.onInChat) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(start = 52.dp), maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
@@ -792,7 +792,7 @@ private fun ToolCallCard(tc: ToolCall) {
                 Spacer(Modifier.width(8.dp))
                 Text(ToolPresentation.displayName(tc.name), fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelLarge)
                 Spacer(Modifier.width(8.dp))
-                Text(errorLine ?: summary, style = MaterialTheme.typography.bodySmall, fontFamily = if (errorLine == null) FontFamily.Monospace else null,
+                Text(errorLine ?: summary, style = MaterialTheme.typography.bodySmall, fontFamily = if (errorLine == null) LocalMonoFont.current else null,
                     color = if (errorLine != null) MaterialTheme.colorScheme.error else androidx.compose.ui.graphics.Color.Unspecified,
                     maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
                 Text(
@@ -830,7 +830,7 @@ private fun MonoBlock(text: String) {
     Surface(color = MaterialTheme.colorScheme.background, shape = RoundedCornerShape(6.dp), modifier = Modifier.fillMaxWidth().padding(top = 2.dp)) {
         SelectionContainer {
             Box(Modifier.heightIn(max = 260.dp).verticalScroll(rememberScrollState()).horizontalScroll(rememberScrollState())) {
-                Text(text, fontFamily = FontFamily.Monospace, fontSize = 12.sp, modifier = Modifier.padding(8.dp))
+                Text(text, fontFamily = LocalMonoFont.current, fontSize = 12.sp, modifier = Modifier.padding(8.dp))
             }
         }
     }
