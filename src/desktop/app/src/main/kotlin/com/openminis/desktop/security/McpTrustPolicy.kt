@@ -93,7 +93,8 @@ object McpTrustPolicy {
     fun resolveCommand(command: String, env: Map<String, String>, isWindows: Boolean, cwd: File? = null): File? {
         val cmd = command.trim().trim('"', '\'')
         if (cmd.isEmpty()) return null
-        val hasDir = cmd.contains('/') || (isWindows && cmd.contains('\\'))
+        // Any separator or an absolute path (also a host-native one, e.g. C:\\… while checking POSIX rules) is a path, not a PATH lookup.
+        val hasDir = cmd.contains('/') || cmd.contains('\\') || File(cmd).isAbsolute
         if (hasDir) {
             val f = File(cmd).let { if (it.isAbsolute || cwd == null) it else File(cwd, cmd) }
             return f.takeIf { it.isFile }

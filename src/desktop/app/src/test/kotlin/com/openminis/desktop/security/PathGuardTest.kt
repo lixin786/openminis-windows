@@ -127,10 +127,25 @@ class PathGuardTest {
     }
 
     @Test fun windowsCaseInsensitiveCompare() {
+        // Platform-independent: Path.startsWith follows the HOST file system's case rules (WindowsPath is
+        // case-insensitive, UnixPath is not), so the expectation for a different-case root depends on the host.
         val a = java.nio.file.Paths.get("/x/Work/A")
-        val b = java.nio.file.Paths.get("/x/work")
-        // On the windows branch the string compare is case-insensitive; on POSIX it is not.
-        assertTrue(PathGuard.isUnder(a, java.nio.file.Paths.get("/x/Work"), windows = false))
-        assertTrue(!PathGuard.isUnder(a, b, windows = false))
+        val sameCase = java.nio.file.Paths.get("/x/Work")
+        val otherCase = java.nio.file.Paths.get("/x/work")
+        val sibling = java.nio.file.Paths.get("/x/Wor")
+        for (flag in listOf(false, true)) {
+            assertTrue(PathGuard.isUnder(a, sameCase, windows = flag), "same case, windows=$flag")
+            assertTrue(!PathGuard.isUnder(a, sibling, windows = flag), "prefix of a name is not a parent, windows=$flag")
+        }
+        assertEquals(win, PathGuard.isUnder(a, otherCase, windows = false), "host path semantics decide case on the POSIX branch")
+        if (win) assertTrue(PathGuard.isUnder(a, otherCase, windows = true), "Windows: different case is still inside")
+    }
+
+    @Test fun windowsStringBranchIsCaseInsensitive() {
+        // The windows=true fallback compares strings; exercise it with backslash paths on any host.
+        val a = java.nio.file.Paths.get("C:\\Users\\Me\\WS\\a.txt")
+        val root = java.nio.file.Paths.get("c:\\users\\me\\ws")
+        assertTrue(PathGuard.isUnder(a, root, windows = true))
+        assertTrue(!PathGuard.isUnder(java.nio.file.Paths.get("C:\\Users\\Me\\WSX\\a.txt"), root, windows = true))
     }
 }
