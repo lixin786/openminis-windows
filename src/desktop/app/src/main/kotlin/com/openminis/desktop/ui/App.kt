@@ -186,7 +186,7 @@ private fun Sidebar(state: AppState, modifier: Modifier) {
         )
         Spacer(Modifier.height(8.dp))
         val items = state.conversations.filter {
-            filter.isBlank() || it.title.contains(filter, true) || it.messages.any { m -> m.displayText.contains(filter, true) }
+            filter.isBlank() || it.displayTitle().contains(filter, true) || it.messages.any { m -> m.displayText.contains(filter, true) }
         }
         LazyColumn(Modifier.weight(1f)) {
             items(items, key = { it.id }) { c -> ConversationRow(state, c) }
@@ -215,7 +215,7 @@ private fun ConversationRow(state: AppState, c: Conversation) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {
-            Text(c.title, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium,
+            Text(c.displayTitle(), maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium,
                 fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal)
             Text(
                 (if (state.runningConversationId == c.id) tr("sidebar.running_prefix") else "") + SimpleDateFormat("MM-dd HH:mm").format(Date(c.updatedAt)),
@@ -232,7 +232,7 @@ private fun ConversationRow(state: AppState, c: Conversation) {
         AlertDialog(
             onDismissRequest = { confirmDelete = false },
             title = { Text(tr("chat.delete.title")) },
-            text = { Text(tr("chat.delete.body", c.title)) },
+            text = { Text(tr("chat.delete.body", c.displayTitle())) },
             confirmButton = { TextButton(onClick = { confirmDelete = false; state.delete(c.id) }) { Text(tr("common.delete")) } },
             dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text(tr("common.cancel")) } },
         )
@@ -379,7 +379,7 @@ private fun CompactDivider(state: AppState, convId: String, mk: CompactMarker, i
 private fun TopBar(state: AppState, conv: Conversation?) {
     val s = state.settings
     Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(conv?.title ?: "OpenMinis", style = MaterialTheme.typography.titleMedium, maxLines = 1,
+        Text(conv?.displayTitle() ?: "OpenMinis", style = MaterialTheme.typography.titleMedium, maxLines = 1,
             overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
         val reading = conv?.id?.let { state.contextReadings[it] }
         if (reading != null && reading.window > 0) {

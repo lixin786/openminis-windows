@@ -6,6 +6,7 @@ import com.openminis.desktop.i18n.I18n
 import com.openminis.desktop.net.HttpProtocolMode
 import com.openminis.desktop.net.ProxyMode
 import com.openminis.desktop.ui.RUNS_ONLY_WHILE_OPEN_NOTE
+import com.openminis.desktop.ui.displayTitle
 import java.io.File
 import java.util.Locale
 import kotlin.test.Test
@@ -123,6 +124,30 @@ class I18nTest {
             }
         }
         assertTrue(hits.isEmpty(), "hard-coded UI text:\n" + hits.joinToString("\n"))
+    }
+
+    @Test fun untitledConversationTitleIsLocalizedAtDisplayTime() {
+        val prev = I18n.active
+        try {
+            val c = com.openminis.desktop.core.Conversation()
+            assertEquals(com.openminis.desktop.core.DEFAULT_CONVERSATION_TITLE, c.title)  // stored value stays English
+            I18n.apply("zh-CN"); assertEquals("新对话", c.displayTitle())
+            I18n.apply("zh-TW"); assertEquals("新對話", c.displayTitle())
+            I18n.apply("en"); assertEquals("New chat", c.displayTitle())
+            I18n.apply("zh-CN"); assertEquals("周报", c.copy(title = "周报").displayTitle())
+        } finally { I18n.apply(prev) }
+    }
+
+    @Test fun conversationTitlesReachTheUiOnlyThroughDisplayTitle() {
+        // Data-model defaults have no i18n key, so the hard-coded-text scan cannot see them; check the paths instead.
+        val root = srcRoot().resolve("com/openminis/desktop")
+        val files = root.resolve("ui").listFiles()!!.filter { it.extension == "kt" && it.name != "AppState.kt" } + root.resolve("Main.kt")
+        val raw = Regex("""\b(?:c|conv|conversation|chat|it)\??\.title\b""")
+        val hits = files.flatMap { f -> f.readLines().mapIndexedNotNull { i, l -> if (raw.containsMatchIn(l) && !l.trimStart().startsWith("//")) "${f.name}:${i + 1}: ${l.trim()}" else null } }
+        assertTrue(hits.isEmpty(), "conversation title shown without displayTitle():\n" + hits.joinToString("\n"))
+        val literal = root.walkTopDown().filter { it.extension == "kt" && it.name != "Conversation.kt" }
+            .flatMap { f -> f.readLines().mapIndexedNotNull { i, l -> if ("\"New chat\"" in l && !l.trimStart().startsWith("//")) "${f.name}:${i + 1}" else null } }.toList()
+        assertTrue(literal.isEmpty(), "\"New chat\" literal outside Conversation.kt: $literal")
     }
 
     @Test fun oldSettingsFilesFollowTheSystemLanguage() {

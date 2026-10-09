@@ -109,10 +109,14 @@ data class ChatMessage(
     val displayText: String get() = if (role == ChatRole.USER) text else rounds.joinToString("\n\n") { it.text }.trim()
 }
 
+/** Persisted title of a chat that has not been titled yet. Stored in English for settings/JSON
+ * compatibility; the UI renders it via [com.openminis.desktop.ui.displayTitle] (key chat.untitled). */
+const val DEFAULT_CONVERSATION_TITLE = "New chat"
+
 @Serializable
 data class Conversation(
     val id: String = UUID.randomUUID().toString(),
-    val title: String = "New chat",
+    val title: String = DEFAULT_CONVERSATION_TITLE,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),
     val provider: ProviderKind? = null,

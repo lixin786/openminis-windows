@@ -198,7 +198,7 @@ private fun TaskEditor(state: AppState, initial: ScheduledTask, all: List<Schedu
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text(tr("sched.where"), Modifier.width(120.dp))
         val current = (t.targetMode as? ScheduledTargetMode.AppendToSession)?.sessionId
-        Dropdown(current, listOf<String?>(null) + chats.map { it.id }, { id -> if (id == null) tr("sched.where.new") else tr("sched.where.follow", chats.firstOrNull { it.id == id }?.title ?: tr("sched.deleted_chat")) },
+        Dropdown(current, listOf<String?>(null) + chats.map { it.id }, { id -> if (id == null) tr("sched.where.new") else tr("sched.where.follow", chats.firstOrNull { it.id == id }?.displayTitle() ?: tr("sched.deleted_chat")) },
             { t = t.copy(targetMode = if (it == null) ScheduledTargetMode.NewSession else ScheduledTargetMode.AppendToSession(it)) })
     }
     Row(verticalAlignment = Alignment.CenterVertically) {

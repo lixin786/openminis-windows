@@ -2,6 +2,7 @@
 // Copyright (C) OpenMinis contributors. Licensed under the GNU GPL v3 (see LICENSE).
 package com.openminis.desktop.ui
 
+import com.openminis.desktop.core.DEFAULT_CONVERSATION_TITLE
 import com.openminis.desktop.i18n.tr
 
 import androidx.compose.runtime.getValue
@@ -557,7 +558,7 @@ class AppState(val paths: AppPaths, private val scope: CoroutineScope) {
 
     companion object {
         fun titleFrom(text: String): String {
-            val line = text.lineSequence().firstOrNull { it.isNotBlank() }?.trim() ?: "New chat"
+            val line = text.lineSequence().firstOrNull { it.isNotBlank() }?.trim() ?: DEFAULT_CONVERSATION_TITLE
             return if (line.length > 48) line.take(47) + "…" else line
         }
     }
