@@ -63,6 +63,9 @@ class McpHttpCore(
     private val allowedOrigins: () -> Set<String> = { emptySet() },
     /** Source-address check (private IPv4 only). Tests may widen it to loopback; production never does. */
     private val remoteAllowed: (InetAddress) -> Boolean = LanAddresses::isPrivateV4,
+    /** 13.2: every tools/call is recorded here (time, IP, tool, path, bytes, outcome). */
+    private val audit: RemoteAudit? = null,
+    private val callTimeoutMs: Long = CALL_TIMEOUT_MS,
 ) {
     companion object {
         const val PROTOCOL_VERSION = "2025-06-18"
@@ -73,6 +76,9 @@ class McpHttpCore(
         const val FAIL_WINDOW_MS = 60_000L
         const val FAIL_LIMIT = 5
         const val LOCK_MS = 60_000L
+        /** One tools/call may run this long; at most [MAX_CONCURRENT_CALLS] run at once. */
+        const val CALL_TIMEOUT_MS = 10_000L
+        const val MAX_CONCURRENT_CALLS = 4
         private const val TAG = "RemoteMcp"
 
         // Self-heal bodies (MUST contain "session" early). Fixed, short, nothing interpolated.
@@ -256,13 +262,39 @@ class McpHttpCore(
                 if (!session.initialized) return rpcError(msg, -32600, "not initialized: send notifications/initialized first")
                 val p = msg.optJSONObject("params") ?: return rpcError(msg, -32602, "missing params")
                 val name = p.optString("name", "")
-                val result = tools().call(name, p.optJSONObject("arguments") ?: JSONObject())
-                    ?: return rpcError(msg, -32602, "unknown tool")
+                val args = p.optJSONObject("arguments") ?: JSONObject()
+                val set = tools()
+                val path = args.optString("path", "").ifEmpty { if (name == "list_dir" || name == "search_files") "." else "" }
+                val fut = callPool.submit<JSONObject?> { set.call(name, args) }
+                val result = try {
+                    fut.get(callTimeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
+                } catch (_: java.util.concurrent.TimeoutException) {
+                    fut.cancel(true)
+                    audit?.record(ip, name.take(64), path, 0, RemoteAudit.TIMEOUT)
+                    return McpResponse(200, JSON, rpcResult(msg, toolError("timed out after ${callTimeoutMs / 1000} s")))
+                } catch (e: java.util.concurrent.ExecutionException) {
+                    AppLogger.error(TAG, "tool call failed: ${e.cause?.javaClass?.simpleName}")
+                    audit?.record(ip, name.take(64), path, 0, RemoteAudit.ERROR)
+                    return McpResponse(200, JSON, rpcResult(msg, toolError("internal error")))
+                }
+                if (result == null) {
+                    audit?.record(ip, "(unknown)", "", 0, RemoteAudit.UNKNOWN_TOOL)
+                    return rpcError(msg, -32602, "unknown tool")
+                }
+                val bytes = result.optJSONArray("content")?.let { c -> (0 until c.length()).sumOf { c.optJSONObject(it)?.optString("text").orEmpty().toByteArray(Charsets.UTF_8).size } } ?: 0
+                audit?.record(ip, name, path, bytes, if (result.optBoolean("isError")) RemoteAudit.ERROR else RemoteAudit.OK)
                 McpResponse(200, JSON, rpcResult(msg, result))
             }
             else -> rpcError(msg, -32601, "method not found")
         }
     }
+
+    private val callPool = java.util.concurrent.Executors.newFixedThreadPool(MAX_CONCURRENT_CALLS) { r ->
+        Thread(r, "remote-mcp-tool").apply { isDaemon = true }
+    }
+
+    private fun toolError(message: String) = JSONObject()
+        .put("content", JSONArray().put(JSONObject().put("type", "text").put("text", message))).put("isError", true)
 
     private fun rpcResult(req: JSONObject, result: JSONObject) =
         JSONObject().put("jsonrpc", "2.0").put("id", req.get("id")).put("result", result).toString()

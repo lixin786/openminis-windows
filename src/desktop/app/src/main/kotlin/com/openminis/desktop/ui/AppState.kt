@@ -59,7 +59,25 @@ class AppState(val paths: AppPaths, private val scope: CoroutineScope) {
         private set
 
     /** [batch13] Phone link: read-only MCP server on private LAN addresses (MCP-SERVER.md). */
-    val remote = com.openminis.desktop.remote.RemoteMcpController(paths.root, com.openminis.app.BuildConfig.VERSION_NAME)
+    val remote = com.openminis.desktop.remote.RemoteMcpController(paths.root, com.openminis.app.BuildConfig.VERSION_NAME) { remoteTools }
+    /** 13.2: the five read-only tools the phone may call (workspace only, sensitive files denied by default). */
+    private val remoteTools: com.openminis.desktop.remote.RemoteToolSet by lazy {
+        com.openminis.desktop.remote.RemoteReadTools(
+            workspace = { settings.workspace() },
+            memoryEnabled = { settings.memoryEnabled },
+            memory = { memory },
+            denySensitive = { settings.remoteMcp.denySensitive },
+            appVersion = com.openminis.app.BuildConfig.VERSION_NAME,
+            shells = {
+                buildList {
+                    if (com.openminis.desktop.core.AppPaths.isWindows) { add("PowerShell"); add("cmd") } else add("bash")
+                    if (com.openminis.desktop.tools.ShellRunner.wslAvailable) add("WSL")
+                }
+            },
+            // Names, state and tool counts only: command lines, args and env may hold secrets.
+            mcpServers = { mcp.servers.map { com.openminis.desktop.remote.McpServerSummary(it.name, mcp.status(it.name).state, mcp.status(it.name).toolCount) } },
+        )
+    }
     var remoteTick by mutableStateOf(0)
         private set
 

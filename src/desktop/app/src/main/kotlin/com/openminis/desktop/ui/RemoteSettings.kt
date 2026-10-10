@@ -39,6 +39,8 @@ internal fun RemoteSection(state: AppState, s: RemoteMcpSettings, onChange: (Rem
     }
     Toggle(tr("remote.enable"), s.enabled) { onChange(s.copy(enabled = it)) }
     Hint(tr("remote.privacy_boundary"))
+    Toggle(tr("remote.deny_sensitive"), s.denySensitive) { onChange(s.copy(denySensitive = it)) }
+    Hint(tr("remote.deny_sensitive_hint"))
     NumberField(tr("remote.port"), s.port, Modifier.fillMaxWidth()) { onChange(s.copy(port = it.coerceIn(1024, 65535))) }
     Hint(tr("remote.apply_on_save"))
 

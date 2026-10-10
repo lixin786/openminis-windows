@@ -18,6 +18,8 @@ import java.util.concurrent.Executors
 data class RemoteMcpSettings(
     val enabled: Boolean = false,
     val port: Int = DEFAULT_PORT,
+    /** 13.2: refuse `.env*`, `*.pem`, `*.key`, `id_rsa*` and all of `.git/` to the phone. Can be turned off. */
+    val denySensitive: Boolean = true,
 ) {
     companion object { const val DEFAULT_PORT = 47821 }
 }
@@ -91,12 +93,16 @@ class RemoteMcpServer(
 }
 
 /** App-side owner: token file, core, server, and the settings they follow. */
-class RemoteMcpController(appRoot: File, version: String) {
+class RemoteMcpController(appRoot: File, version: String, tools: () -> RemoteToolSet = { RemoteToolSet.None }) {
     val tokens = RemoteTokenStore(File(appRoot, "remote-mcp-token"))
+    /** Phone tool calls: time, IP, tool, path, bytes, outcome. Never the token. */
+    val audit = RemoteAudit(File(appRoot, "remote-mcp-audit.jsonl"))
     private var bindingsForOrigin: List<RemoteMcpServer.Binding> = emptyList()
     val core = McpHttpCore(
         token = { tokens.get() },
+        tools = tools,
         serverVersion = version,
+        audit = audit,
         allowedOrigins = { bindingsForOrigin.map { "http://${it.address}:${it.port}" }.toSet() },
     )
     val server = RemoteMcpServer(core)
