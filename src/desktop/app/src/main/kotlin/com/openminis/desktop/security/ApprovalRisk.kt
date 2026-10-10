@@ -31,7 +31,12 @@ object ApprovalRisk {
     private val OVERWRITE_REDIRECT = Regex("""(?<![>0-9&])[12]?>(?![>&])\s*(?!\${'$'}null\b|nul\b|NUL\b|/dev/null\b)\S""")
     private val APPEND_REDIRECT = Regex(""">>\s*\S""")
 
-    fun shell(command: String): ShellAssessment {
+    /**
+     * @param workspace when given, an absolute / `~` / `..` path that really resolves inside it (PathGuard: realpath,
+     * symlinks, Windows case rules) no longer raises "outside the workspace". Anything not plainly a path
+     * (variables, `%X%`, provider/ADS colons, flag values) stays flagged — the safe side.
+     */
+    fun shell(command: String, workspace: java.io.File? = null): ShellAssessment {
         val cmd = command.trim()
         val notes = mutableListOf<String>()
         var risk = Risk.MEDIUM
@@ -61,7 +66,7 @@ object ApprovalRisk {
                 name in MAY_OVERWRITE_CMDS -> medium("risk.may_overwrite")
                 GIT_DESTRUCTIVE.any { it.containsMatchIn(seg.trim()) } -> high("risk.git")
             }
-            if (!readOnly && args.any(CommandGuard::isOutsideReference)) outsideWrite = true
+            if (!readOnly && args.any { CommandGuard.isOutsideReference(it) && !provablyInside(it, workspace) }) outsideWrite = true
         }
         if (OVERWRITE_REDIRECT.containsMatchIn(cmd.replace(APPEND_REDIRECT, " "))) high("risk.overwrite")
         else if (APPEND_REDIRECT.containsMatchIn(cmd)) medium("risk.append")
@@ -81,6 +86,18 @@ object ApprovalRisk {
         val order = listOf("risk.delete", "risk.overwrite", "risk.outside", "risk.git", "risk.script", "risk.interp", "risk.nested",
             "risk.may_overwrite", "risk.append", "risk.meta")
         return ShellAssessment(risk, consequence, notes.sortedBy { order.indexOf(it).let { i -> if (i < 0) 99 else i } }, deleteTarget)
+    }
+
+    private val DRIVE_ABS = Regex("""^[A-Za-z]:[\\/]""")
+
+    internal fun provablyInside(token: String, workspace: java.io.File?): Boolean {
+        if (workspace == null) return false
+        val t = token.trim().removeSurrounding("\"").removeSurrounding("'")
+        if (t.isEmpty() || t.startsWith("-") || t.any { it in "\$%`*?<>|" }) return false
+        // A colon is only acceptable as the drive letter of an absolute Windows path (not HKLM:, Env:, a.txt:stream).
+        if (t.contains(':') && !(DRIVE_ABS.containsMatchIn(t) && t.indexOf(':', 2) < 0)) return false
+        if (t.startsWith("\\\\")) return false // UNC
+        return PathGuard.resolve(t, workspace, listOf(workspace)) is PathGuard.Result.Allowed
     }
 
     /**

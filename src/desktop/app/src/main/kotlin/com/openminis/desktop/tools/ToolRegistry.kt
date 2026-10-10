@@ -212,7 +212,7 @@ class ToolRegistry(
             is PathGuard.Result.Refused -> return refused(r, "shell working directory")
         }
         if (needsApproval(cmd, s, verdict)) {
-            val a = com.openminis.desktop.security.ApprovalRisk.shell(cmd)
+            val a = com.openminis.desktop.security.ApprovalRisk.shell(cmd, ws())
             val high = a.risk == com.openminis.desktop.security.Risk.HIGH
             // HIGH commands are never remembered, even when CommandGuard would allow a session approval.
             val remember = !high && CommandGuard.mayBeRememberedForSession(cmd)

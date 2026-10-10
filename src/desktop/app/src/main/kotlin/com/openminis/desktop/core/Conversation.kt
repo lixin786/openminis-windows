@@ -138,6 +138,20 @@ data class Conversation(
     val latestMarker: CompactMarker? get() = compactMarkers.lastOrNull()
 }
 
+/**
+ * Two files can carry the same conversation id (a sync tool's "copy (1).json", a restored backup). Compose list keys
+ * must be unique (LazyColumn throws "Key … was already used" on the main thread), so only the most recently
+ * updated copy is kept (input is newest-first); the others are logged and left untouched on disk.
+ */
+internal fun dedupeById(newestFirst: List<Conversation>): List<Conversation> {
+    val seen = HashSet<String>()
+    return newestFirst.filter { c ->
+        seen.add(c.id).also { kept ->
+            if (!kept) com.openminis.app.logging.AppLogger.warning("ConversationStore", "duplicate conversation id ${c.id} (\"${c.title}\") skipped; newer copy kept")
+        }
+    }
+}
+
 class ConversationStore(private val dir: File) {
     // encodeDefaults must stay true: timestamps/ids default to "now"/random and would otherwise be regenerated on load.
     private val json = Json { ignoreUnknownKeys = true; prettyPrint = false; encodeDefaults = true; explicitNulls = false }
@@ -155,6 +169,7 @@ class ConversationStore(private val dir: File) {
                 }
             }
             .sortedByDescending { it.updatedAt }
+            .let(::dedupeById)
 
     fun save(c: Conversation) = atomicWrite(fileFor(c.id), json.encodeToString(Conversation.serializer(), c))
 

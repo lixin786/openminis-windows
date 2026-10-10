@@ -217,6 +217,7 @@ symlink 不得逃逸（`~/link -> /tmp` 这类）；目标不存在时解析最�
 - 聚合：连续 ≥2 个成功的只读调用（file_read / list_dir / memory_get / 白名单只读 shell）合成一个「✓ N 个只读操作」chip，可展开；整轮折叠改为按 chip 之后的行数（≥4 行且全部结束）判断。
 - `ToolCall` 新增 `startedAt`（旧会话缺省为空，运行中卡片退回显示状态文字）。
 - 新增文案三语齐全；测试 `UiRefreshBatch1Test`（8）。
+- batch11.1 修复：① 两个会话文件带同一 id（同步冲突副本、备份还原）时主线程抛 LazyColumn `Key … was already used`——加载时按 id 去重，保留最近更新的那份，其余只记日志、不删文件。② 风险提示条「涉及工作区之外的路径」误报：绝对路径 / `~` / `..` 经 PathGuard（realpath、符号链接、Windows 大小写）确认确实落在工作区内时不再报；变量、`%X%`、`HKLM:` 等 provider 路径、ADS、UNC、参数值形式照旧报（安全侧）。测试 `Batch11FixesTest`（3）。
 
 ## 构建
 
