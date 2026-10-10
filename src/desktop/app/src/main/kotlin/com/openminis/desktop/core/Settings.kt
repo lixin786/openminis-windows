@@ -87,6 +87,8 @@ data class AppSettings(
     val network: com.openminis.desktop.net.NetworkSettings = com.openminis.desktop.net.NetworkSettings(),
     /** [P1-3] Skill folder ids switched off in Settings › Skills (kept on disk, left out of the prompt). */
     val disabledSkills: List<String> = emptyList(),
+    /** [batch13] Settings › System › Phone link: the read-only MCP server phones connect to (off by default). */
+    val remoteMcp: com.openminis.desktop.remote.RemoteMcpSettings = com.openminis.desktop.remote.RemoteMcpSettings(),
 ) {
     fun provider(kind: ProviderKind = activeProvider): ProviderSettings = providers[kind] ?: ProviderSettings()
     /** The model the next turn starts on. */

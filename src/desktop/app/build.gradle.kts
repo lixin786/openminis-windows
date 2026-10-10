@@ -80,7 +80,7 @@ compose.desktop {
             copyright = PACKAGING_COPYRIGHT
             licenseFile.set(rootProject.file("LICENSE"))
             // From `gradlew :desktop:suggestRuntimeModules` + TLS (EC ciphers) + Windows accessibility bridge.
-            modules("java.instrument", "java.sql", "jdk.unsupported", "jdk.crypto.ec", "jdk.accessibility")
+            modules("java.instrument", "java.sql", "jdk.unsupported", "jdk.crypto.ec", "jdk.accessibility", "jdk.httpserver")
             windows {
                 menuGroup = "OpenMinis"
                 shortcut = true

@@ -58,6 +58,11 @@ class AppState(val paths: AppPaths, private val scope: CoroutineScope) {
     var settings by mutableStateOf(settingsStore.load())
         private set
 
+    /** [batch13] Phone link: read-only MCP server on private LAN addresses (MCP-SERVER.md). */
+    val remote = com.openminis.desktop.remote.RemoteMcpController(paths.root, com.openminis.app.BuildConfig.VERSION_NAME)
+    var remoteTick by mutableStateOf(0)
+        private set
+
     val conversations = mutableStateListOf<Conversation>()
     var selectedId by mutableStateOf<String?>(null)
         private set
@@ -171,7 +176,7 @@ class AppState(val paths: AppPaths, private val scope: CoroutineScope) {
 
     fun updateMcpServers(list: List<com.openminis.desktop.mcp.McpServerConfig>) = scope.launch(Dispatchers.IO) { mcp.setServers(list) }
     fun connectMcp(sv: com.openminis.desktop.mcp.McpServerConfig) = scope.launch(Dispatchers.IO) { mcp.connect(sv) }
-    fun shutdown() { runCatching { scheduler.stop() }; runCatching { mcp.shutdown() } }
+    fun shutdown() { runCatching { scheduler.stop() }; runCatching { mcp.shutdown() }; runCatching { remote.shutdown() } }
 
     // ------------------------------------------------------------ scheduled tasks (P1-4)
 
@@ -324,8 +329,10 @@ class AppState(val paths: AppPaths, private val scope: CoroutineScope) {
     init {
         mcp.onChange = { scope.launch(Dispatchers.Main) { mcpTick++ } }
         scheduler.onChange = { scope.launch(Dispatchers.Main) { scheduledTick++ } }
+        remote.onChange = { scope.launch(Dispatchers.Main) { remoteTick++ } }
+        if (settings.remoteMcp.enabled) scope.launch(Dispatchers.IO) { remote.apply(settings.remoteMcp) }
         scheduler.start()
-        Runtime.getRuntime().addShutdownHook(Thread { runCatching { mcp.shutdown() } })
+        Runtime.getRuntime().addShutdownHook(Thread { runCatching { mcp.shutdown() }; runCatching { remote.shutdown() } })
         com.openminis.desktop.net.DesktopHttp.update(settings.network)
         conversations.addAll(store.loadAll())
         newChat()
@@ -345,6 +352,7 @@ class AppState(val paths: AppPaths, private val scope: CoroutineScope) {
     fun updateSettings(s: AppSettings) {
         if (s.language != settings.language) com.openminis.desktop.i18n.I18n.apply(s.language)
         if (s.network != settings.network) com.openminis.desktop.net.DesktopHttp.update(s.network)
+        if (s.remoteMcp != settings.remoteMcp) scope.launch(Dispatchers.IO) { remote.apply(s.remoteMcp) }
         settings = s
         com.openminis.app.data.FastModePrefs.setEnabled(false)
         scope.launch(Dispatchers.IO) { settingsStore.save(s) }

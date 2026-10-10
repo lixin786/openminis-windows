@@ -55,6 +55,7 @@ enum class SettingsPage(val group: SettingsGroup, val key: String) {
     SUBAGENTS(SettingsGroup.AGENT, "settings.page.subagents"),
     MEMORY(SettingsGroup.AGENT, "settings.page.memory"),
     SCHEDULED(SettingsGroup.AGENT, "settings.page.scheduled"),
+    REMOTE(SettingsGroup.SYSTEM, "settings.page.remote"),
     ABOUT(SettingsGroup.SYSTEM, "settings.page.about"),
     ADVANCED(SettingsGroup.SYSTEM, "settings.page.advanced");
     companion object { fun of(g: SettingsGroup) = entries.filter { it.group == g } }
@@ -72,6 +73,7 @@ private fun pageIcon(p: SettingsPage) = when (p) {
     SettingsPage.SUBAGENTS -> Lucide.Users
     SettingsPage.MEMORY -> Lucide.Brain
     SettingsPage.SCHEDULED -> Lucide.CalendarClock
+    SettingsPage.REMOTE -> Lucide.Smartphone
     SettingsPage.ABOUT -> Lucide.Info
     SettingsPage.ADVANCED -> Lucide.ShieldAlert
 }
@@ -299,6 +301,7 @@ fun SettingsDialog(state: AppState, onClose: () -> Unit) {
                             Icon(Lucide.CalendarClock, null, Modifier.size(16.dp)); Spacer(Modifier.width(6.dp)); Text(tr("settings.scheduled.open"))
                         }
                                 }
+                                SettingsPage.REMOTE -> RemoteSection(state, draft.remoteMcp) { draft = draft.copy(remoteMcp = it) }
                                 SettingsPage.ABOUT -> {
                         AboutPage()
                         Section(tr("settings.data"))
