@@ -4,3 +4,6 @@ build/
 !**/gradle/wrapper/gradle-wrapper.jar
 .idea/
 *.tmp
+
+# screenshots are sent as attachments, never committed
+docs/**/shots/
