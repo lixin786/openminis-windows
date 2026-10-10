@@ -22,6 +22,8 @@ data class ToolCall(
     /** Gemini 3 thought signature — must be echoed back with the function call. */
     val thoughtSignature: String? = null,
     val durationMs: Long? = null,
+    /** Wall-clock start of execution (live elapsed time on a running card); null in old chats. */
+    val startedAt: Long? = null,
 )
 
 /** One model response inside an assistant turn: text + optional tool calls it issued. */

@@ -386,7 +386,7 @@ object CommandGuard {
     }
 
     /** An argument that refers outside the current directory (used only to deny auto-approval). */
-    private fun isOutsideReference(a: String): Boolean {
+    internal fun isOutsideReference(a: String): Boolean {
         val t = a.trim()
         if (t.startsWith("-") && !t.contains('/') && !t.contains('\\') && !t.contains(':')) return false
         if (isWindowsSwitch(t)) return false
@@ -481,6 +481,9 @@ object CommandGuard {
     }
 
     // ================================================================== tables
+
+    internal fun isDeleteCommand(name: String): Boolean = name.lowercase() in DELETE_COMMANDS
+    internal fun isWrapper(name: String): Boolean = name.lowercase() in WRAPPERS
 
     private val DELETE_COMMANDS = setOf("rm", "unlink", "rd", "rmdir", "del", "erase", "remove-item", "ri", "rni")
 

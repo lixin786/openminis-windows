@@ -30,6 +30,19 @@ data class ApprovalRequest(
     val onAlwaysAllow: (() -> Unit)? = null,
     /** Label of that button ("Always allow", "Allow for this session"). */
     val rememberLabel: String? = null,
+    // ---- UI-REFRESH §1: presentation (never changes what is allowed) ----
+    val kind: com.openminis.desktop.security.ApprovalKind = com.openminis.desktop.security.ApprovalKind.OTHER,
+    val risk: com.openminis.desktop.security.Risk = com.openminis.desktop.security.Risk.MEDIUM,
+    /** Verb-phrase question shown as the card title ("Run this PowerShell command?"). */
+    val title: String = summary,
+    /** One plain line: what will happen and whether it can be undone. */
+    val consequence: String = "",
+    /** Short warnings for MEDIUM / HIGH (error strip), most important first. */
+    val riskNotes: List<String> = emptyList(),
+    /** HIGH only: text the user must type to enable the main button; null = tick "I understand" instead. */
+    val confirmPhrase: String? = null,
+    /** Main button words ("Run", "Run anyway", "Delete anyway"); null = default for the tier. */
+    val actionLabel: String? = null,
 )
 
 fun interface ToolApprover {
@@ -199,7 +212,10 @@ class ToolRegistry(
             is PathGuard.Result.Refused -> return refused(r, "shell working directory")
         }
         if (needsApproval(cmd, s, verdict)) {
-            val remember = CommandGuard.mayBeRememberedForSession(cmd)
+            val a = com.openminis.desktop.security.ApprovalRisk.shell(cmd)
+            val high = a.risk == com.openminis.desktop.security.Risk.HIGH
+            // HIGH commands are never remembered, even when CommandGuard would allow a session approval.
+            val remember = !high && CommandGuard.mayBeRememberedForSession(cmd)
             val why = when {
                 CommandGuard.hasMetacharacters(cmd) -> "approval.shell.meta"
                 CommandGuard.isInterpreter(cmd) -> "approval.shell.interp"
@@ -209,6 +225,12 @@ class ToolRegistry(
                 "shell", tr(why, s.shell.label), cmd,
                 onAlwaysAllow = if (remember) ({ SessionShellApprovals.add(cmd) }) else null,
                 rememberLabel = if (remember) tr("approval.session") else null,
+                kind = com.openminis.desktop.security.ApprovalKind.SHELL, risk = a.risk,
+                title = if (a.isDelete) tr("approval.title.delete", a.deleteTarget!!) else tr("approval.title.shell", s.shell.label),
+                consequence = if (a.isDelete) tr(a.consequence, a.deleteTarget!!) else tr(a.consequence),
+                riskNotes = a.notes.map { tr(it) },
+                confirmPhrase = if (high) com.openminis.desktop.security.ApprovalRisk.confirmPhrase(a) else null,
+                actionLabel = when { a.isDelete -> tr("approval.delete_anyway"); high -> tr("approval.run_anyway"); else -> tr("approval.run") },
             ))
             if (!ok) return ToolOutcome("The user declined to run this command.", isError = true, denied = true)
         }

@@ -148,7 +148,10 @@ class ScheduledToolbox(
                 "create" -> {
                     val t = ScheduledToolSpec.buildTask(args, currentConversation()) { raw -> resolve(raw)?.id }
                     val ok = approver.approve(ApprovalRequest("scheduled", tr("approval.scheduled.create", t.label, describeUi(t)),
-                        tr("approval.scheduled.detail", describeUi(t), tr(if (t.targetMode is ScheduledTargetMode.NewSession) "scheduled.where.new" else "scheduled.where.follow"), t.prompt)))
+                        tr("approval.scheduled.detail", describeUi(t), tr(if (t.targetMode is ScheduledTargetMode.NewSession) "scheduled.where.new" else "scheduled.where.follow"), t.prompt),
+                        kind = com.openminis.desktop.security.ApprovalKind.SCHEDULED,
+                        title = tr("approval.title.scheduled", t.label), consequence = tr("consequence.scheduled", describeUi(t)),
+                        actionLabel = tr("approval.create")))
                     if (!ok) return ToolOutcome("The user declined to create this scheduled task.", isError = true, denied = true)
                     val saved = scheduler.save(t)
                     ToolOutcome(JSONObject().put("ok", true).put("id", saved.id).put("label", saved.label).put("trigger", describe(saved))

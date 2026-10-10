@@ -71,6 +71,8 @@ class AppState(val paths: AppPaths, private val scope: CoroutineScope) {
     var showSettings by mutableStateOf(false)
     var composerFocusTick by mutableStateOf(0)
         private set
+    /** Text to put into the composer once (e.g. "ask again" on a declined tool card); the composer clears it. */
+    var composerPrefill by mutableStateOf<String?>(null)
     var toast by mutableStateOf<String?>(null)
     /** Transient line under the chat ("Compacting context…", "Rate limited — retrying (1/3)…"). */
     var statusText by mutableStateOf<String?>(null)
@@ -541,6 +543,11 @@ class AppState(val paths: AppPaths, private val scope: CoroutineScope) {
         job?.cancel()
         if (compactingConversationId != null) statusText = null
         pendingApproval?.answer?.complete(false)
+    }
+
+    /** Declined tool card › Ask again: a ready-to-send request in the composer (the user can still edit it). */
+    fun requestRetry(tc: com.openminis.desktop.core.ToolCall) {
+        composerPrefill = com.openminis.desktop.i18n.I18n.tr("tool.retry_prompt", ToolPresentation.displayName(tc.name), toolSummary(tc).take(300))
     }
 
     fun answerApproval(allow: Boolean, dontAskAgain: Boolean = false) {

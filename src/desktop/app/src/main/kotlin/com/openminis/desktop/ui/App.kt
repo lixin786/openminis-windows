@@ -127,7 +127,7 @@ fun App(state: AppState) {
             }
         }
     }
-    MinisTheme(state.settings) {
+    MinisTheme(state.settings) { CompositionLocalProvider(LocalAppState provides state) {
         Surface(
             Modifier.fillMaxSize().dragAndDropTarget(shouldStartDragAndDrop = { true }, target = dropTarget),
             color = MaterialTheme.colorScheme.background,
@@ -161,7 +161,7 @@ fun App(state: AppState) {
                     }
                 }
             }
-            state.pendingApproval?.let { ApprovalDialog(state, it) }
+            state.pendingApproval?.let { if (!isInline(state, it)) ApprovalDialog(state, it) }
             if (state.showSettings) SettingsDialog(state) { state.showSettings = false }
             if (state.showScheduled) ScheduledTasksWindow(state) { state.showScheduled = false }
             state.toast?.let { msg ->
@@ -170,7 +170,7 @@ fun App(state: AppState) {
                 }, text = { Box(Modifier.heightIn(max = 320.dp).verticalScroll(rememberScrollState())) { SelectionContainer { Text(msg) } } })
             }
         }
-    }
+    } }
 }
 
 // ---------------------------------------------------------------- Sidebar
@@ -418,6 +418,7 @@ private fun ChatPane(state: AppState, modifier: Modifier) {
                 Text(status ?: tr("chat.compacting"), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
+        state.pendingApproval?.takeIf { isInline(state, it) }?.let { InlineApproval(state, it) }
         Composer(state)
     }
 }
@@ -729,7 +730,42 @@ private fun RoundView(r: Round) {
             )
         }
     }
-    if (ToolPresentation.shouldGroup(r.toolCalls)) ToolGroup(r.toolCalls) else r.toolCalls.forEach { ToolCallCard(it) }
+    if (ToolPresentation.shouldGroupSegments(r.toolCalls)) ToolGroup(r.toolCalls) else ToolSegments(r.toolCalls)
+}
+
+/** Lets deep cards reach the app (retry a declined call) without threading state through every composable. */
+internal val LocalAppState = androidx.compose.runtime.staticCompositionLocalOf<AppState?> { null }
+
+@Composable
+private fun ToolSegments(calls: List<ToolCall>) {
+    ToolPresentation.segments(calls).forEach { seg ->
+        when (seg) {
+            is ToolPresentation.Single -> ToolCallCard(seg.call)
+            is ToolPresentation.ReadOnlyRun -> ReadOnlyChip(seg.calls)
+        }
+    }
+}
+
+/** "✓ 7 read-only operations" (UI-REFRESH §2.2): consecutive successful look-ups folded into one chip. */
+@Composable
+private fun ReadOnlyChip(calls: List<ToolCall>) {
+    var open by remember(calls.first().id) { mutableStateOf(false) }
+    val total = calls.sumOf { it.durationMs ?: 0L }
+    Column(Modifier.padding(vertical = 3.dp)) {
+        Surface(shape = RoundedCornerShape(50), color = MaterialTheme.colorScheme.surfaceVariant,
+            modifier = Modifier.clip(RoundedCornerShape(50)).clickable { open = !open }
+                .semantics { contentDescription = tr("tool.readonly_chip", calls.size) }) {
+            Row(Modifier.padding(horizontal = 10.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Check, null, Modifier.size(14.dp), tint = LocalSuccessColor.current)
+                Spacer(Modifier.width(6.dp))
+                Text(tr("tool.readonly_chip", calls.size), style = MaterialTheme.typography.labelMedium)
+                Spacer(Modifier.width(8.dp))
+                Text(ToolPresentation.duration(total), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Icon(if (open) Icons.Default.ExpandLess else Icons.Default.ExpandMore, tr(if (open) "tool.collapse" else "tool.expand"), Modifier.size(16.dp))
+            }
+        }
+        if (open) Column(Modifier.padding(start = 12.dp)) { calls.forEach { ToolCallCard(it) } }
+    }
 }
 
 /** A finished batch of calls folded under one header; failures stay listed under it even when folded. */
@@ -742,21 +778,24 @@ private fun ToolGroup(calls: List<ToolCall>) {
             .padding(horizontal = 10.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(Icons.Default.Build, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        Icon(if (failed.isEmpty()) Icons.Default.Check else Icons.Default.ErrorOutline, null, Modifier.size(16.dp),
+            tint = if (failed.isEmpty()) LocalSuccessColor.current else MaterialTheme.colorScheme.error)
         Spacer(Modifier.width(8.dp))
         Text(if (failed.isEmpty()) tr("tool.group", calls.size) else tr("tool.group_failed", calls.size, failed.size),
             style = MaterialTheme.typography.labelLarge, color = if (failed.isEmpty()) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error,
             modifier = Modifier.weight(1f))
         Text(calls.map { ToolPresentation.displayName(it.name) }.distinct().joinToString(", "), style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+        Text(ToolPresentation.duration(calls.sumOf { it.durationMs ?: 0L }), style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 4.dp))
         Icon(if (open) Icons.Default.ExpandLess else Icons.Default.ExpandMore, tr(if (open) "tool.collapse" else "tool.expand"), Modifier.size(18.dp))
     }
     Column(Modifier.padding(start = 12.dp)) {
-        (if (open) calls else failed).forEach { ToolCallCard(it) }
+        if (open) ToolSegments(calls) else failed.forEach { ToolCallCard(it) }
     }
 }
 
-private fun kindIcon(k: ToolPresentation.Kind) = when (k) {
+internal fun kindIcon(k: ToolPresentation.Kind) = when (k) {
     ToolPresentation.Kind.SHELL -> Icons.Default.Terminal
     ToolPresentation.Kind.FILE -> Icons.Default.Description
     ToolPresentation.Kind.MEMORY -> Icons.Default.Psychology
@@ -766,40 +805,76 @@ private fun kindIcon(k: ToolPresentation.Kind) = when (k) {
     ToolPresentation.Kind.OTHER -> Icons.Default.Build
 }
 
+/**
+ * UI-REFRESH §2: `[state] [kind] name · one-line summary ........ time · ▾`, collapsed by default.
+ * Running = accent + spinner + live elapsed; success = green check + total; failed = error mark + first
+ * error line + "Show details"; denied = neutral "Cancelled" + "Ask again".
+ */
 @Composable
 private fun ToolCallCard(tc: ToolCall) {
-    val failure = ToolPresentation.isFailure(tc)
-    // Failed calls open by themselves the first time they are shown.
-    var open by remember(tc.id) { mutableStateOf(failure) }
+    val st = ToolPresentation.cardState(tc)
+    var open by remember(tc.id) { mutableStateOf(false) }
     val clipboard = LocalClipboardManager.current
-    val running = tc.status == ToolStatus.RUNNING || tc.status == ToolStatus.PENDING
-    val tint = when {
-        failure -> MaterialTheme.colorScheme.error
-        tc.status == ToolStatus.DONE -> MaterialTheme.colorScheme.primary
-        else -> MaterialTheme.colorScheme.onSurfaceVariant
+    val app = LocalAppState.current
+    val success = LocalSuccessColor.current
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant
+    val tint = when (st) {
+        ToolPresentation.CardState.RUNNING -> MaterialTheme.colorScheme.primary
+        ToolPresentation.CardState.SUCCESS -> success
+        ToolPresentation.CardState.FAILED -> MaterialTheme.colorScheme.error
+        ToolPresentation.CardState.DENIED -> muted
     }
     val summary = remember(tc.argsJson) { toolSummary(tc) }
-    val errorLine = ToolPresentation.errorLine(tc)
+    val errorLine = if (st == ToolPresentation.CardState.FAILED) ToolPresentation.errorLine(tc) else null
+    val now by produceState(System.currentTimeMillis(), st) {
+        while (st == ToolPresentation.CardState.RUNNING) { value = System.currentTimeMillis(); kotlinx.coroutines.delay(200) }
+    }
+    val timeText = when (st) {
+        ToolPresentation.CardState.RUNNING -> ToolPresentation.elapsed(tc, now) ?: tr("tool.status.${tc.status.name}")
+        ToolPresentation.CardState.DENIED -> tr("tool.cancelled")
+        else -> tc.durationMs?.let(ToolPresentation::duration).orEmpty()
+    }
     Surface(
         shape = RoundedCornerShape(8.dp),
-        color = if (failure) MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.35f) else MaterialTheme.colorScheme.surfaceVariant,
+        color = when (st) {
+            ToolPresentation.CardState.FAILED -> MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.35f)
+            ToolPresentation.CardState.DENIED -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+            else -> MaterialTheme.colorScheme.surfaceVariant
+        },
+        border = if (st == ToolPresentation.CardState.RUNNING) androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)) else null,
         modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
     ) {
-        Column(Modifier.clickable { open = !open }.padding(horizontal = 10.dp, vertical = 7.dp)) {
+        Column(Modifier.clickable { open = !open }.padding(horizontal = 10.dp, vertical = 7.dp)
+            .semantics { contentDescription = tr("tool.card_a11y", ToolPresentation.displayName(tc.name), tr("tool.state.${st.name}")) }) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                if (running) CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
-                else Icon(kindIcon(ToolPresentation.kind(tc.name)), tr("tool.status.${tc.status.name}"), tint = tint, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(8.dp))
-                Text(ToolPresentation.displayName(tc.name), fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelLarge)
-                Spacer(Modifier.width(8.dp))
-                Text(errorLine ?: summary, style = MaterialTheme.typography.bodySmall, fontFamily = if (errorLine == null) LocalMonoFont.current else null,
-                    color = if (errorLine != null) MaterialTheme.colorScheme.error else androidx.compose.ui.graphics.Color.Unspecified,
+                when (st) {
+                    ToolPresentation.CardState.RUNNING -> CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp, color = tint)
+                    ToolPresentation.CardState.SUCCESS -> Icon(Icons.Default.CheckCircle, tr("tool.state.SUCCESS"), tint = tint, modifier = Modifier.size(16.dp))
+                    ToolPresentation.CardState.FAILED -> Icon(Icons.Default.Error, tr("tool.state.FAILED"), tint = tint, modifier = Modifier.size(16.dp))
+                    ToolPresentation.CardState.DENIED -> Icon(Icons.Default.Block, tr("tool.state.DENIED"), tint = tint, modifier = Modifier.size(16.dp))
+                }
+                Spacer(Modifier.width(6.dp))
+                Icon(kindIcon(ToolPresentation.kind(tc.name)), null, tint = muted, modifier = Modifier.size(14.dp))
+                Spacer(Modifier.width(6.dp))
+                Text(ToolPresentation.displayName(tc.name), fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelLarge,
+                    color = if (st == ToolPresentation.CardState.DENIED) muted else androidx.compose.ui.graphics.Color.Unspecified)
+                Text(" · ", style = MaterialTheme.typography.labelLarge, color = muted)
+                Text(errorLine ?: summary, style = MaterialTheme.typography.bodySmall,
+                    color = if (errorLine != null) MaterialTheme.colorScheme.error else muted,
                     maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                Text(
-                    listOfNotNull(tr("tool.status.${tc.status.name}").takeIf { running || failure }, tc.durationMs?.let(ToolPresentation::duration)).joinToString(" · "),
-                    style = MaterialTheme.typography.labelSmall, color = tint, modifier = Modifier.padding(horizontal = 4.dp),
-                )
+                Text(timeText, style = MaterialTheme.typography.labelSmall, color = tint, modifier = Modifier.padding(horizontal = 4.dp))
                 Icon(if (open) Icons.Default.ExpandLess else Icons.Default.ExpandMore, tr(if (open) "tool.collapse" else "tool.expand"), Modifier.size(18.dp))
+            }
+            if (!open && st == ToolPresentation.CardState.FAILED) {
+                Text(tr("tool.show_details"), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.padding(start = 42.dp, top = 2.dp))
+            }
+            if (st == ToolPresentation.CardState.DENIED && app != null && !app.isRunning) {
+                TextButton(onClick = { app.requestRetry(tc) }, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                    modifier = Modifier.padding(start = 34.dp).heightIn(min = 28.dp)) {
+                    Icon(Icons.Default.Refresh, null, Modifier.size(14.dp)); Spacer(Modifier.width(4.dp))
+                    Text(tr("tool.ask_again"), style = MaterialTheme.typography.labelMedium)
+                }
             }
             if (open) {
                 Spacer(Modifier.height(6.dp))
@@ -826,7 +901,7 @@ private fun SectionLabel(label: String, onCopy: () -> Unit) {
 }
 
 @Composable
-private fun MonoBlock(text: String) {
+internal fun MonoBlock(text: String) {
     Surface(color = MaterialTheme.colorScheme.background, shape = RoundedCornerShape(6.dp), modifier = Modifier.fillMaxWidth().padding(top = 2.dp)) {
         SelectionContainer {
             Box(Modifier.heightIn(max = 260.dp).verticalScroll(rememberScrollState()).horizontalScroll(rememberScrollState())) {
@@ -858,6 +933,9 @@ private fun Composer(state: AppState) {
     var value by remember { mutableStateOf(TextFieldValue("")) }
     val focus = remember { FocusRequester() }
     LaunchedEffect(state.composerFocusTick) { runCatching { focus.requestFocus() } }
+    LaunchedEffect(state.composerPrefill) {
+        state.composerPrefill?.let { value = TextFieldValue(it, androidx.compose.ui.text.TextRange(it.length)); state.composerPrefill = null; runCatching { focus.requestFocus() } }
+    }
     fun submit() {
         if (state.send(value.text)) value = TextFieldValue("")
     }
@@ -965,55 +1043,4 @@ internal fun AttachmentChip(state: AppState, a: Attachment, onRemove: (() -> Uni
             if (onRemove != null) IconButton(onClick = onRemove, modifier = Modifier.size(26.dp)) { Icon(Icons.Default.Close, tr("attach.remove", a.fileName), Modifier.size(16.dp)) }
         }
     }
-}
-
-// ---------------------------------------------------------------- Approval
-
-/**
- * Keyboard: Enter = Allow, Esc = Deny, Ctrl+Enter or A = the request's remember option (MCP "Always allow",
- * shell "Allow for this session") when it offers one. The Allow button takes focus
- * when the dialog opens (Tab / Shift+Tab move between the buttons, Space/Enter press the focused one).
- */
-@Composable
-private fun ApprovalDialog(state: AppState, p: PendingApproval) {
-    val allowFocus = remember { FocusRequester() }
-    val rememberLabel = if (p.request.onAlwaysAllow != null) p.request.rememberLabel ?: tr("approval.always") else null
-    LaunchedEffect(p) { kotlinx.coroutines.delay(60); runCatching { allowFocus.requestFocus() } }
-    AlertDialog(
-        onDismissRequest = { state.answerApproval(allow = false) },   // Esc
-        modifier = Modifier.onPreviewKeyEvent { ev ->
-            if (ev.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-            when {
-                (ev.key == Key.Enter || ev.key == Key.NumPadEnter) && ev.isCtrlPressed -> { if (rememberLabel != null) state.answerApproval(allow = true, dontAskAgain = true); true }
-                ev.key == Key.A && !ev.isCtrlPressed && !ev.isAltPressed && rememberLabel != null -> { state.answerApproval(allow = true, dontAskAgain = true); true }
-                ev.key == Key.Enter || ev.key == Key.NumPadEnter -> { state.answerApproval(allow = true); true }
-                ev.key == Key.Escape -> { state.answerApproval(allow = false); true }
-                else -> false
-            }
-        }.semantics { contentDescription = tr("approval.a11y", p.request.summary) },
-        icon = { Icon(Icons.Default.Terminal, null) },
-        title = { Text(p.request.summary) },
-        text = {
-            Column {
-                Text(tr("approval.intro"), style = MaterialTheme.typography.bodyMedium)
-                Spacer(Modifier.height(8.dp))
-                MonoBlock(p.request.detail)
-                Spacer(Modifier.height(6.dp))
-                Text(tr("approval.keys") + (rememberLabel?.let { tr("approval.keys_remember", it) } ?: ""), style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        },
-        confirmButton = {
-            Row {
-                if (rememberLabel != null) TextButton(onClick = { state.answerApproval(allow = true, dontAskAgain = true) },
-                    modifier = Modifier.semantics { contentDescription = tr("approval.remember_a11y", rememberLabel) }) { Text(tr("approval.remember_button", rememberLabel)) }
-                Button(onClick = { state.answerApproval(allow = true) },
-                    modifier = Modifier.focusRequester(allowFocus).semantics { contentDescription = tr("approval.allow") }) { Text(tr("approval.allow")) }
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = { state.answerApproval(allow = false) },
-                modifier = Modifier.semantics { contentDescription = tr("approval.deny") }) { Text(tr("approval.deny")) }
-        },
-    )
 }

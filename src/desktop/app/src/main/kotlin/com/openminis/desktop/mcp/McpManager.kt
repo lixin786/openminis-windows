@@ -132,7 +132,11 @@ class McpManager(
             else tr("approval.mcp.start_every", s.name, v.reason)
         val ok = approver.approve(ApprovalRequest("mcp", summary, detail,
             onAlwaysAllow = if (v.persistable) ({ trustPermanently(s) }) else null,
-            rememberLabel = if (v.persistable) tr("approval.mcp.always_cmd") else null))
+            rememberLabel = if (v.persistable) tr("approval.mcp.always_cmd") else null,
+            kind = com.openminis.desktop.security.ApprovalKind.MCP_START,
+            title = tr("approval.title.mcp_start", s.name), consequence = tr("consequence.mcp_start"),
+            riskNotes = if (v.persistable) emptyList() else listOf(tr("risk.mcp_every", v.reason)),
+            actionLabel = tr("approval.start")))
         if (ok && v.persistable) sessionTrust[s.name] = s.launchFingerprint()
         return ok
     }
@@ -248,7 +252,10 @@ class McpManager(
         val s = servers.firstOrNull { it.name == t.server } ?: return ToolOutcome("Error: MCP server ${t.server} was removed", isError = true)
         if (s.confirmToolCalls && !approver.approve(ApprovalRequest("mcp", tr("approval.mcp.call", t.name, s.name), args.toString(2).take(4000),
                 onAlwaysAllow = { setServers(servers.map { if (it.name == s.name) it.copy(confirmToolCalls = false) else it }) },
-                rememberLabel = tr("approval.mcp.always_tools")))) {
+                rememberLabel = tr("approval.mcp.always_tools"),
+                kind = com.openminis.desktop.security.ApprovalKind.MCP_CALL,
+                title = tr("approval.title.mcp_call", t.name), consequence = tr("consequence.mcp_call", s.name),
+                actionLabel = tr("approval.call")))) {
             return ToolOutcome("The user denied this MCP tool call.", isError = true, denied = true)
         }
         var attempt = 0

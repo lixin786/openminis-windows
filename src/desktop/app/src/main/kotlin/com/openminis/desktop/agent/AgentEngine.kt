@@ -318,7 +318,7 @@ class AgentEngine(
                         return
                     }
                     synchronized(lock) {
-                        executed[i] = call.copy(status = ToolStatus.RUNNING)
+                        executed[i] = call.copy(status = ToolStatus.RUNNING, startedAt = System.currentTimeMillis())
                         current = current.copy(toolCalls = executed.toList()); emit(true)
                     }
                     val started = System.currentTimeMillis()

@@ -20,6 +20,9 @@ import androidx.compose.ui.text.platform.SystemFont
 import androidx.compose.ui.unit.Density
 import com.openminis.desktop.core.AppSettings
 
+/** "Success" green for tool cards (Material 3 has no success role). */
+val LocalSuccessColor = staticCompositionLocalOf { Color(0xFF2E7D32) }
+
 /** Font for code, tool arguments/results and command lines (Settings › Appearance › Code font). */
 val LocalMonoFont = staticCompositionLocalOf<FontFamily> { FontFamily.Monospace }
 
@@ -70,6 +73,7 @@ fun MinisTheme(
     CompositionLocalProvider(
         LocalDensity provides Density(base.density, base.fontScale * scale),
         LocalMonoFont provides mono,
+        LocalSuccessColor provides if (useDark) Color(0xFF81C784) else Color(0xFF2E7D32),
     ) {
         MaterialTheme(colorScheme = colors, typography = typography, content = content)
     }
