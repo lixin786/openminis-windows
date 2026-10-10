@@ -26,7 +26,6 @@ val windowsRuntime by configurations.creating { isTransitive = false }
 dependencies {
     implementation(compose.desktop.currentOs)
     implementation(compose.material3)
-    implementation(compose.materialIconsExtended)
 
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-swing:1.9.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
@@ -51,6 +50,8 @@ dependencies {
 tasks.test {
     useJUnitPlatform()
     systemProperty("java.awt.headless", "true")
+    // Off-screen PNGs of the main window for visual review: ./gradlew :desktop:test -Dopenminis.screenshots=/tmp/shots --tests '*ScreenshotHarness*'
+    System.getProperty("openminis.screenshots")?.let { systemProperty("openminis.screenshots", it) }
     maxHeapSize = "1g"
     // Hotfix 1: run the whole suite with the default charset a zh-CN Windows JDK 17 has (GBK), so
     // any code that still relies on the platform charset fails here instead of on users' machines.

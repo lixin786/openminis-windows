@@ -4,12 +4,10 @@
 // Copyright (C) OpenMinis contributors. Licensed under the GNU GPL v3 (see LICENSE).
 package com.openminis.desktop.ui
 
+import com.openminis.desktop.ui.icons.Lucide
 import com.openminis.desktop.i18n.tr
 
 import androidx.compose.foundation.layout.*
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -101,8 +99,8 @@ private fun SkillRow(sk: Skill, enabled: Boolean, onToggle: (Boolean) -> Unit, o
                 TextButton(onClick = { open = !open }, modifier = Modifier.weight(1f)) {
                     Text("${if (open) "▾" else "▸"} ${sk.name} — ${sk.description.take(90)}", Modifier.fillMaxWidth(), maxLines = 1)
                 }
-                IconButton(onClick = onOpen) { Icon(Icons.Default.FolderOpen, tr("skills.open_one")) }
-                IconButton(onClick = { confirmDelete = true }) { Icon(Icons.Default.Delete, tr("skills.delete_one")) }
+                IconButton(onClick = onOpen) { Icon(Lucide.FolderOpen, tr("skills.open_one")) }
+                IconButton(onClick = { confirmDelete = true }) { Icon(Lucide.Trash, tr("skills.delete_one")) }
             }
             if (confirmDelete) Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(tr("skills.delete_q", sk.dir.absolutePath), style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))

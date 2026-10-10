@@ -3,13 +3,10 @@
 // Copyright (C) OpenMinis contributors. Licensed under the GNU GPL v3 (see LICENSE).
 package com.openminis.desktop.ui
 
+import com.openminis.desktop.ui.icons.Lucide
 import com.openminis.desktop.i18n.tr
 
 import androidx.compose.foundation.layout.*
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowDownward
-import androidx.compose.material.icons.filled.ArrowUpward
-import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -80,9 +77,9 @@ private fun SubAgentEditor(
                     Text("${if (open) "▾" else "▸"} ${def.displayName()}" + (extras.pinnedModel?.let { " · ${it.label}" } ?: tr("sub.auto")),
                         Modifier.fillMaxWidth())
                 }
-                IconButton(onClick = { onMove(-1) }, enabled = canMoveUp) { Icon(Icons.Default.ArrowUpward, tr("common.move_up")) }
-                IconButton(onClick = { onMove(1) }, enabled = canMoveDown) { Icon(Icons.Default.ArrowDownward, tr("common.move_down")) }
-                IconButton(onClick = onDelete, enabled = !def.isBuiltIn) { Icon(Icons.Default.Delete, tr("sub.delete")) }
+                IconButton(onClick = { onMove(-1) }, enabled = canMoveUp) { Icon(Lucide.ArrowUp, tr("common.move_up")) }
+                IconButton(onClick = { onMove(1) }, enabled = canMoveDown) { Icon(Lucide.ArrowDown, tr("common.move_down")) }
+                IconButton(onClick = onDelete, enabled = !def.isBuiltIn) { Icon(Lucide.Trash, tr("sub.delete")) }
             }
             if (open) {
                 OutlinedTextField(def.name, { onChange(def.copy(name = it.take(SubAgentLimits.NAME_MAX_LENGTH)), extras) },

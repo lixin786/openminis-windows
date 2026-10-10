@@ -37,10 +37,10 @@ class AppearanceTest {
 
     @Test fun fontChoicesOrder() {
         val installed = listOf("Arial", "Consolas", "@Microsoft YaHei", "microsoft yahei ui", "Zeta", "Cascadia Mono", "Segoe UI")
-        assertEquals(listOf("", "microsoft yahei ui", "Segoe UI", "Arial", "Cascadia Mono", "Consolas", "Zeta"),
+        assertEquals(listOf("", Appearance.SYSTEM_FONT, "microsoft yahei ui", "Segoe UI", "Arial", "Cascadia Mono", "Consolas", "Zeta"),
             Appearance.fontChoices(installed, Appearance.UI_RECOMMENDED, ""), "default, installed recommended (case-insensitive), then A→Z, no @ variants")
         val mono = Appearance.fontChoices(installed, Appearance.MONO_RECOMMENDED, "Gone Mono")
-        assertEquals(listOf("", "Cascadia Mono", "Consolas", "Gone Mono"), mono.take(4), "an uninstalled current choice stays visible")
+        assertEquals(listOf("", Appearance.SYSTEM_FONT, "Cascadia Mono", "Consolas", "Gone Mono"), mono.take(5), "an uninstalled current choice stays visible")
         assertEquals(mono.size, mono.toSet().size)
     }
 

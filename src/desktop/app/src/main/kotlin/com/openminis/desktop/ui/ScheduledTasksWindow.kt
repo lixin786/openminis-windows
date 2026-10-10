@@ -6,16 +6,13 @@
 // Copyright (C) OpenMinis contributors. Licensed under the GNU GPL v3 (see LICENSE).
 package com.openminis.desktop.ui
 
+import com.openminis.desktop.ui.icons.Lucide
 import com.openminis.desktop.i18n.I18n
 import com.openminis.desktop.i18n.tr
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -111,9 +108,9 @@ private fun TaskRow(state: AppState, t: ScheduledTask, all: List<ScheduledTask>,
                         " · " + (if (t.targetMode is ScheduledTargetMode.NewSession) tr("sched.target.new") else tr("sched.target.follow")),
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                IconButton(onClick = { state.scheduler.runNow(t.id) }, enabled = !running) { Icon(Icons.Default.PlayArrow, tr("sched.run_now")) }
-                IconButton(onClick = onEdit) { Icon(Icons.Default.Edit, tr("sched.edit")) }
-                IconButton(onClick = { confirmDelete = true }) { Icon(Icons.Default.Delete, tr("sched.delete_one")) }
+                IconButton(onClick = { state.scheduler.runNow(t.id) }, enabled = !running) { Icon(Lucide.Play, tr("sched.run_now")) }
+                IconButton(onClick = onEdit) { Icon(Lucide.Pencil, tr("sched.edit")) }
+                IconButton(onClick = { confirmDelete = true }) { Icon(Lucide.Trash, tr("sched.delete_one")) }
                 TextButton(onClick = { open = !open }) { Text(if (open) tr("sched.hide_runs") else tr("sched.runs")) }
             }
             if (confirmDelete) Row(verticalAlignment = Alignment.CenterVertically) {

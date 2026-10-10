@@ -2,12 +2,11 @@
 // Copyright (C) OpenMinis contributors. Licensed under the GNU GPL v3 (see LICENSE).
 package com.openminis.desktop.ui
 
+import com.openminis.desktop.ui.icons.Lucide
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.Box
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -59,7 +58,7 @@ fun <T> Dropdown(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(prefix + label(value), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Spacer(Modifier.width(2.dp))
-                Icon(Icons.Default.ArrowDropDown, null)
+                Icon(Lucide.ChevronDown, null)
             }
         }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {

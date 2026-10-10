@@ -3,12 +3,11 @@
 // Copyright (C) OpenMinis contributors. Licensed under the GNU GPL v3 (see LICENSE).
 package com.openminis.desktop.ui
 
+import com.openminis.desktop.ui.icons.Lucide
 import com.openminis.desktop.i18n.I18n
 import com.openminis.desktop.i18n.tr
 
 import androidx.compose.foundation.layout.*
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -65,7 +64,7 @@ private fun McpServerRow(state: AppState, sv: McpServerConfig, onChange: (McpSer
                     Text("${if (open) "▾" else "▸"} ${sv.name} · $stText", Modifier.fillMaxWidth())
                 }
                 OutlinedButton(enabled = sv.isStdio, onClick = { state.connectMcp(sv) }) { Text(tr("mcp.connect")) }
-                IconButton(onClick = { state.mcp.stop(sv.name); onDelete() }) { Icon(Icons.Default.Delete, tr("mcp.delete")) }
+                IconButton(onClick = { state.mcp.stop(sv.name); onDelete() }) { Icon(Lucide.Trash, tr("mcp.delete")) }
             }
             st.error?.let { Text(it.take(600), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
             if (!sv.isStdio && sv.url.isNotBlank()) Hint(tr("mcp.http_kept", sv.url))

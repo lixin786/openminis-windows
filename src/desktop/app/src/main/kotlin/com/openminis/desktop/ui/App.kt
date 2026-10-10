@@ -2,6 +2,7 @@
 // Copyright (C) OpenMinis contributors. Licensed under the GNU GPL v3 (see LICENSE).
 package com.openminis.desktop.ui
 
+import com.openminis.desktop.ui.icons.Lucide
 import com.openminis.desktop.i18n.I18n
 import com.openminis.desktop.i18n.tr
 
@@ -22,10 +23,10 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -135,9 +136,9 @@ fun App(state: AppState) {
             var sidebarWidth by remember { mutableStateOf(270.dp) }
             val density = LocalDensity.current
             Row(Modifier.fillMaxSize()) {
-                Sidebar(state, Modifier.width(sidebarWidth).fillMaxHeight())
+                if (!state.sidebarCollapsed) Sidebar(state, Modifier.width(sidebarWidth).fillMaxHeight())
                 // Drag handle to resize the sidebar.
-                Box(
+                if (!state.sidebarCollapsed) Box(
                     Modifier.width(5.dp).fillMaxHeight()
                         .pointerHoverIcon(PointerIcon(Cursor(Cursor.E_RESIZE_CURSOR)))
                         .draggable(
@@ -182,43 +183,61 @@ private fun Sidebar(state: AppState, modifier: Modifier) {
     LaunchedEffect(state.searchFocusTick) { if (state.searchFocusTick > 0) runCatching { searchFocus.requestFocus() } }
     Column(modifier.background(MaterialTheme.colorScheme.surfaceVariant).padding(10.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("OpenMinis", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-            IconButton(onClick = { state.showScheduled = true }) { Icon(Icons.Default.Schedule, tr("sidebar.scheduled")) }
-            IconButton(onClick = { state.showSettings = true }) { Icon(Icons.Default.Settings, tr("sidebar.settings")) }
+            BrandMark(26.dp)
+            Spacer(Modifier.width(8.dp))
+            Text("OpenMinis", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+            IconButton(onClick = { state.showScheduled = true }, modifier = Modifier.size(34.dp)) { Icon(Lucide.CalendarClock, tr("sidebar.scheduled"), Modifier.size(18.dp)) }
+            IconButton(onClick = { state.openSettings() }, modifier = Modifier.size(34.dp)) { Icon(Lucide.Settings, tr("sidebar.settings"), Modifier.size(18.dp)) }
         }
         Spacer(Modifier.height(6.dp))
         FilledTonalButton(onClick = { state.newChat() }, modifier = Modifier.fillMaxWidth()) {
-            Icon(Icons.Default.Add, null); Spacer(Modifier.width(6.dp)); Text(tr("sidebar.new_chat"))
+            Icon(Lucide.MessageSquarePlus, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text(tr("sidebar.new_chat"))
         }
         Spacer(Modifier.height(8.dp))
-        OutlinedTextField(
-            value = filter, onValueChange = { filter = it }, singleLine = true,
-            placeholder = { Text(tr("sidebar.search")) }, leadingIcon = { Icon(Icons.Default.Search, null) },
-            trailingIcon = if (filter.isNotEmpty()) {
-                { IconButton(onClick = { filter = "" }) { Icon(Icons.Default.Close, tr("sidebar.search_clear")) } }
-            } else null,
-            modifier = Modifier.fillMaxWidth().tabMovesFocus().focusRequester(searchFocus)
-                .onPreviewKeyEvent { ev -> if (ev.type == KeyEventType.KeyDown && ev.key == Key.Escape && filter.isNotEmpty()) { filter = ""; true } else false }
-                .semantics { contentDescription = tr("sidebar.search") }, textStyle = MaterialTheme.typography.bodyMedium,
-        )
+        // Compact search pill (36 dp) instead of a 56 dp outlined field.
+        Row(
+            Modifier.fillMaxWidth().height(36.dp).clip(RoundedCornerShape(10.dp))
+                .background(MaterialTheme.colorScheme.surface)
+                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(10.dp))
+                .padding(start = 10.dp, end = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(Lucide.Search, null, Modifier.size(15.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.width(8.dp))
+            Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+                if (filter.isEmpty()) Text(tr("sidebar.search") + "  Ctrl+F", style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f), maxLines = 1)
+                androidx.compose.foundation.text.BasicTextField(
+                    value = filter, onValueChange = { filter = it }, singleLine = true,
+                    textStyle = MaterialTheme.typography.bodySmall.copy(color = MaterialTheme.colorScheme.onSurface),
+                    cursorBrush = androidx.compose.ui.graphics.SolidColor(MaterialTheme.colorScheme.primary),
+                    modifier = Modifier.fillMaxWidth().tabMovesFocus().focusRequester(searchFocus)
+                        .onPreviewKeyEvent { ev -> if (ev.type == KeyEventType.KeyDown && ev.key == Key.Escape && filter.isNotEmpty()) { filter = ""; true } else false }
+                        .semantics { contentDescription = tr("sidebar.search") },
+                )
+            }
+            if (filter.isNotEmpty()) IconButton(onClick = { filter = "" }, modifier = Modifier.size(28.dp)) {
+                Icon(Lucide.X, tr("sidebar.search_clear"), Modifier.size(14.dp))
+            }
+        }
         Spacer(Modifier.height(8.dp))
         val terms = remember(filter) { ConversationSearch.terms(filter) }
         val hits = ConversationSearch.search(state.conversations, filter) { it.displayTitle() }
+        // Relative times ("3 分钟前") refresh every 30 s.
+        val now by produceState(System.currentTimeMillis()) { while (true) { kotlinx.coroutines.delay(30_000); value = System.currentTimeMillis() } }
         LazyColumn(Modifier.weight(1f)) {
             if (terms.isEmpty()) {
-                val pinned = hits.filter { it.conversation.pinned }
-                if (pinned.isNotEmpty()) {
-                    item(key = "h-pinned") { SidebarHeader(tr("sidebar.pinned")) }
-                    items(pinned, key = { it.conversation.id }) { h -> ConversationRow(state, h.conversation, terms, null) }
-                    item(key = "h-recent") { SidebarHeader(tr("sidebar.recent")) }
+                // Pinned, then Today / Yesterday / Previous 7 days / Earlier (UI-REFRESH §3.1).
+                ShellModel.sections(hits.map { it.conversation }, now).forEach { sec ->
+                    item(key = "h-${sec.headerKey}") { SidebarHeader(tr(sec.headerKey)) }
+                    items(sec.conversations, key = { it.id }) { c -> ConversationRow(state, c, terms, null, now) }
                 }
-                items(hits.filterNot { it.conversation.pinned }, key = { it.conversation.id }) { h -> ConversationRow(state, h.conversation, terms, null) }
             } else {
                 if (hits.isEmpty()) item(key = "none") {
                     Text(tr("sidebar.no_results"), style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(10.dp))
                 }
-                items(hits, key = { it.conversation.id }) { h -> ConversationRow(state, h.conversation, terms, h.snippet) }
+                items(hits, key = { it.conversation.id }) { h -> ConversationRow(state, h.conversation, terms, h.snippet, now) }
             }
         }
         Text(
@@ -250,47 +269,71 @@ private fun highlighted(text: String, terms: List<String>): AnnotatedString {
 
 @OptIn(ExperimentalFoundationApi::class, ExperimentalComposeUiApi::class)
 @Composable
-private fun ConversationRow(state: AppState, c: Conversation, terms: List<String>, snippet: String?) {
+private fun ConversationRow(state: AppState, c: Conversation, terms: List<String>, snippet: String?, now: Long) {
     val selected = c.id == state.selectedId
     val hover = remember { MutableInteractionSource() }
     val hovered by hover.collectIsHoveredAsState()
     var confirmDelete by remember { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
     val renaming = state.renamingId == c.id
+    val running = state.runningConversationId == c.id || state.scheduledRunning.containsKey(c.id)
+    val unread = !running && state.isUnread(c)
+    LaunchedEffect(selected, c.updatedAt) { if (selected) state.markSeen(c) }
     Row(
-        Modifier.fillMaxWidth().padding(vertical = 2.dp).clip(RoundedCornerShape(8.dp))
-            .background(if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f) else androidx.compose.ui.graphics.Color.Transparent)
+        Modifier.fillMaxWidth().padding(vertical = 1.dp).clip(RoundedCornerShape(8.dp))
+            .background(when {
+                selected -> MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                hovered -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f)
+                else -> androidx.compose.ui.graphics.Color.Transparent
+            })
             .hoverable(hover)
             .onPointerEvent(PointerEventType.Press) { ev -> if (ev.buttons.isSecondaryPressed) { state.select(c.id); menuOpen = true } }
             .combinedClickable(onClick = { state.select(c.id) }, onDoubleClick = { state.select(c.id); state.renamingId = c.id })
-            .padding(horizontal = 10.dp, vertical = 8.dp),
+            .padding(start = 6.dp, end = 4.dp, top = 6.dp, bottom = 6.dp)
+            .heightIn(min = 28.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        // Left dot: running (accent, pulsing) or unread (accent); keeps titles aligned when absent.
+        Box(Modifier.width(10.dp), contentAlignment = Alignment.Center) {
+            if (running || unread) {
+                val pulse = if (running) {
+                    val t = rememberInfiniteTransition()
+                    t.animateFloat(0.35f, 1f, infiniteRepeatable(tween(700), RepeatMode.Reverse)).value
+                } else 1f
+                Box(Modifier.size(6.dp).alpha(pulse).background(MaterialTheme.colorScheme.primary, CircleShape)
+                    .semantics { contentDescription = tr(if (running) "sidebar.running" else "sidebar.unread") })
+            }
+        }
+        Spacer(Modifier.width(4.dp))
         Column(Modifier.weight(1f)) {
             if (renaming) RenameField(state, c)
             else Row(verticalAlignment = Alignment.CenterVertically) {
-                if (c.pinned) Icon(Icons.Default.PushPin, tr("sidebar.pinned"), Modifier.size(14.dp).padding(end = 2.dp), tint = MaterialTheme.colorScheme.primary)
+                if (c.pinned) Icon(Lucide.Pin, tr("sidebar.pinned"), Modifier.size(13.dp).padding(end = 3.dp), tint = MaterialTheme.colorScheme.primary)
                 Text(highlighted(c.displayTitle(), terms), maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal)
+                    fontWeight = if (selected || unread) FontWeight.SemiBold else FontWeight.Normal)
             }
             if (snippet != null) Text(highlighted(snippet, terms), maxLines = 2, overflow = TextOverflow.Ellipsis,
                 style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text(
-                (if (state.runningConversationId == c.id) tr("sidebar.running_prefix") else "") + SimpleDateFormat("MM-dd HH:mm").format(Date(c.updatedAt)),
-                style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
         }
-        if ((hovered || selected || menuOpen) && !renaming) Box {
-            IconButton(onClick = { menuOpen = true }, modifier = Modifier.size(28.dp)) {
-                Icon(Icons.Default.MoreVert, tr("chat.more"), modifier = Modifier.size(18.dp))
+        if (!renaming) Box(Modifier.widthIn(min = 28.dp), contentAlignment = Alignment.CenterEnd) {
+            // Relative time; on hover (or with the menu open) the "…" menu takes its place.
+            if (hovered || menuOpen) {
+                IconButton(onClick = { menuOpen = true }, modifier = Modifier.size(26.dp)) {
+                    Icon(Lucide.Ellipsis, tr("chat.more"), modifier = Modifier.size(16.dp))
+                }
+            } else {
+                val rel = ShellModel.relative(c.updatedAt, now)
+                Text(if (running) tr("sidebar.running") else tr(rel.key, rel.arg), style = MaterialTheme.typography.labelSmall,
+                    color = if (running) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
             }
             DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                DropdownMenuItem(text = { Text(tr("chat.rename")) }, leadingIcon = { Icon(Icons.Default.Edit, null) },
+                DropdownMenuItem(text = { Text(tr("chat.rename")) }, leadingIcon = { Icon(Lucide.Pencil, null, Modifier.size(16.dp)) },
                     trailingIcon = { Text("F2", style = MaterialTheme.typography.labelSmall) },
                     onClick = { menuOpen = false; state.renamingId = c.id })
-                DropdownMenuItem(text = { Text(tr(if (c.pinned) "chat.unpin" else "chat.pin")) }, leadingIcon = { Icon(Icons.Default.PushPin, null) },
+                DropdownMenuItem(text = { Text(tr(if (c.pinned) "chat.unpin" else "chat.pin")) }, leadingIcon = { Icon(Lucide.Pin, null, Modifier.size(16.dp)) },
                     onClick = { menuOpen = false; state.togglePin(c.id) })
-                DropdownMenuItem(text = { Text(tr("common.delete")) }, leadingIcon = { Icon(Icons.Default.DeleteOutline, null) },
+                DropdownMenuItem(text = { Text(tr("common.delete"), color = MaterialTheme.colorScheme.error) },
+                    leadingIcon = { Icon(Lucide.Trash, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.error) },
                     onClick = { menuOpen = false; confirmDelete = true })
             }
         }
@@ -389,7 +432,7 @@ private fun ChatPane(state: AppState, modifier: Modifier) {
                     SmallFloatingActionButton(
                         onClick = { scope.launch { if (total > 0) listState.animateScrollToItem(total - 1, Int.MAX_VALUE / 2) } },
                         modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp),
-                    ) { Icon(Icons.Default.KeyboardArrowDown, tr("chat.scroll_bottom")) }
+                    ) { Icon(Lucide.ArrowDownToLine, tr("chat.scroll_bottom")) }
                 }
             }
         }
@@ -419,7 +462,9 @@ private fun ChatPane(state: AppState, modifier: Modifier) {
             }
         }
         state.pendingApproval?.takeIf { isInline(state, it) }?.let { InlineApproval(state, it) }
-        Composer(state)
+        // The start screen hosts the composer in its centre; otherwise it sits at the bottom.
+        val emptyChat = messages.isEmpty() && streaming == null
+        if (!emptyChat) Composer(state)
     }
 }
 
@@ -485,8 +530,17 @@ private fun CompactDivider(state: AppState, convId: String, mk: CompactMarker, i
 @Composable
 private fun TopBar(state: AppState, conv: Conversation?) {
     val s = state.settings
-    Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(conv?.displayTitle() ?: "OpenMinis", style = MaterialTheme.typography.titleMedium, maxLines = 1,
+    Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        IconButton(onClick = { state.sidebarCollapsed = !state.sidebarCollapsed }, modifier = Modifier.size(34.dp)) {
+            Icon(Lucide.PanelLeft, tr(if (state.sidebarCollapsed) "toolbar.show_sidebar" else "toolbar.hide_sidebar"), Modifier.size(18.dp))
+        }
+        if (state.sidebarCollapsed) { Spacer(Modifier.width(4.dp)); BrandMark(22.dp) }
+        Spacer(Modifier.width(6.dp))
+        ModelPill(state)
+        Spacer(Modifier.width(6.dp))
+        ThinkingChip(state)
+        Spacer(Modifier.width(10.dp))
+        Text(conv?.displayTitle().orEmpty(), style = MaterialTheme.typography.bodyMedium, maxLines = 1, color = MaterialTheme.colorScheme.onSurfaceVariant,
             overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
         val reading = conv?.id?.let { state.contextReadings[it] }
         if (reading != null && reading.window > 0) {
@@ -494,34 +548,112 @@ private fun TopBar(state: AppState, conv: Conversation?) {
             val near = reading.compactThreshold > 0 && reading.measuredTokens >= reading.compactThreshold * 0.8
             Text(
                 tr("toolbar.ctx", fmtK(reading.measuredTokens), fmtK(reading.window), pct),
-                style = MaterialTheme.typography.labelMedium,
-                color = if (near) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.labelSmall,
+                color = if (near) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
                 modifier = Modifier.padding(end = 4.dp),
             )
         }
         if (conv != null && state.mcp.servers.isNotEmpty()) McpChatButton(state, conv)
         IconButton(
-            onClick = { state.compactNow() },
+            onClick = { state.compactNow() }, modifier = Modifier.size(34.dp),
             enabled = conv != null && conv.messages.isNotEmpty() && !state.isRunning && state.compactingConversationId == null,
-        ) { Icon(Icons.Default.Compress, tr("toolbar.compact")) }
-        Dropdown(
-            value = s.activeProvider, options = ProviderKind.entries, label = { it.label },
-            onSelect = { state.updateSettings(s.copy(activeProvider = it)) },
-        )
-        val kind = s.activeProvider
-        val ps = s.provider(kind)
-        val current = ps.effectiveModel(kind)
-        Dropdown(
-            value = current,
-            options = (listOf(current) + DesktopProviderFactory.suggestedModels(kind)).distinct(),
-            label = { it },
-            onSelect = { state.updateSettings(s.withProvider(kind, ps.copy(model = it))) },
-        )
-        Dropdown(
-            value = s.thinkingLevel, options = listOf("OFF", "LOW", "MEDIUM", "HIGH"), prefix = tr("toolbar.thinking_prefix"),
-            label = { I18n.trOr("thinking.$it", it.lowercase().replaceFirstChar(Char::uppercase)) },
-            onSelect = { state.updateSettings(s.copy(thinkingLevel = it)) },
-        )
+        ) { Icon(Lucide.Shrink, tr("toolbar.compact"), Modifier.size(18.dp)) }
+        IconButton(onClick = { state.sidebarCollapsed = false; state.searchFocusTick++ }, modifier = Modifier.size(34.dp)) {
+            Icon(Lucide.Search, tr("toolbar.search"), Modifier.size(18.dp))
+        }
+        IconButton(onClick = { state.exportSelected() }, enabled = conv != null && conv.messages.isNotEmpty(), modifier = Modifier.size(34.dp)) {
+            Icon(Lucide.Download, tr("toolbar.export"), Modifier.size(18.dp))
+        }
+    }
+}
+
+/** "model | provider" pill (UI-REFRESH §3.2); click = provider + model menu. */
+@Composable
+private fun ModelPill(state: AppState) {
+    val s = state.settings
+    val kind = s.activeProvider
+    val ps = s.provider(kind)
+    val current = ps.effectiveModel(kind)
+    var open by remember { mutableStateOf(false) }
+    var custom by remember { mutableStateOf("") }
+    Box {
+        Surface(
+            shape = RoundedCornerShape(50), color = MaterialTheme.colorScheme.surfaceVariant,
+            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            modifier = Modifier.clip(RoundedCornerShape(50)).clickable { open = true }
+                .semantics { contentDescription = tr("toolbar.model_a11y", current, kind.label) },
+        ) {
+            Row(Modifier.padding(start = 10.dp, end = 6.dp, top = 5.dp, bottom = 5.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Lucide.Sparkles, null, Modifier.size(14.dp), tint = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.width(6.dp))
+                Text(current, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.widthIn(max = 260.dp))
+                Spacer(Modifier.width(6.dp))
+                Box(Modifier.width(1.dp).height(14.dp).background(MaterialTheme.colorScheme.outlineVariant))
+                Spacer(Modifier.width(6.dp))
+                Surface(shape = RoundedCornerShape(6.dp), color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)) {
+                    Text(ShellModel.providerBadge(kind, ps.effectiveBaseUrl(kind)), style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary, maxLines = 1, modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp))
+                }
+                Icon(Lucide.ChevronDown, null, Modifier.size(16.dp).padding(start = 2.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            Text(tr("toolbar.provider"), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp))
+            ProviderKind.entries.forEach { k ->
+                DropdownMenuItem(
+                    text = { Text(k.label + if (s.provider(k).apiKey.isBlank() && k != ProviderKind.OPENAI_COMPATIBLE) tr("toolbar.no_key") else "") },
+                    leadingIcon = { if (k == kind) Icon(Lucide.Check, null, Modifier.size(16.dp)) else Spacer(Modifier.size(16.dp)) },
+                    onClick = { state.updateSettings(s.copy(activeProvider = k)) },
+                )
+            }
+            HorizontalDivider(Modifier.padding(vertical = 4.dp))
+            Text(tr("toolbar.model"), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp))
+            (listOf(current) + DesktopProviderFactory.suggestedModels(kind)).distinct().forEach { m ->
+                DropdownMenuItem(
+                    text = { Text(m, fontFamily = LocalMonoFont.current, style = MaterialTheme.typography.bodySmall) },
+                    leadingIcon = { if (m == current) Icon(Lucide.Check, null, Modifier.size(16.dp)) else Spacer(Modifier.size(16.dp)) },
+                    onClick = { open = false; state.updateSettings(s.withProvider(kind, ps.copy(model = m))) },
+                )
+            }
+            Row(Modifier.padding(horizontal = 12.dp, vertical = 4.dp).width(300.dp), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(custom, { custom = it }, singleLine = true, placeholder = { Text(tr("toolbar.custom_model")) },
+                    textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = LocalMonoFont.current), modifier = Modifier.weight(1f)
+                        .onPreviewKeyEvent { ev ->
+                            if (ev.type == KeyEventType.KeyDown && (ev.key == Key.Enter || ev.key == Key.NumPadEnter) && custom.isNotBlank()) {
+                                state.updateSettings(s.withProvider(kind, ps.copy(model = custom.trim()))); custom = ""; open = false; true
+                            } else false
+                        })
+            }
+            HorizontalDivider(Modifier.padding(vertical = 4.dp))
+            DropdownMenuItem(text = { Text(tr("toolbar.model_settings")) }, leadingIcon = { Icon(Lucide.Settings, null, Modifier.size(16.dp)) },
+                onClick = { open = false; state.openSettings(SettingsPage.MODEL) })
+        }
+    }
+}
+
+@Composable
+private fun ThinkingChip(state: AppState) {
+    val s = state.settings
+    var open by remember { mutableStateOf(false) }
+    val label: (String) -> String = { I18n.trOr("thinking.$it", it.lowercase().replaceFirstChar(Char::uppercase)) }
+    Box {
+        Row(Modifier.clip(RoundedCornerShape(50)).clickable { open = true }.padding(horizontal = 8.dp, vertical = 5.dp)
+            .semantics { contentDescription = tr("toolbar.thinking_prefix") + label(s.thinkingLevel) },
+            verticalAlignment = Alignment.CenterVertically) {
+            Icon(Lucide.Brain, null, Modifier.size(14.dp), tint = if (s.thinkingLevel == "OFF") MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.primary)
+            Spacer(Modifier.width(4.dp))
+            Text(tr("toolbar.thinking_prefix") + label(s.thinkingLevel), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            listOf("OFF", "LOW", "MEDIUM", "HIGH").forEach { lv ->
+                DropdownMenuItem(text = { Text(tr("toolbar.thinking_prefix") + label(lv)) },
+                    leadingIcon = { if (lv == s.thinkingLevel) Icon(Lucide.Check, null, Modifier.size(16.dp)) else Spacer(Modifier.size(16.dp)) },
+                    onClick = { open = false; state.updateSettings(s.copy(thinkingLevel = lv)) })
+            }
+        }
     }
 }
 
@@ -534,7 +666,7 @@ private fun McpChatButton(state: AppState, conv: Conversation) {
     val (on, enabled) = McpChatScope.counts(servers, conv.mcpOff)
     Box {
         TextButton(onClick = { open = true }) {
-            Icon(Icons.Default.Extension, null, Modifier.size(16.dp))
+            Icon(Lucide.Puzzle, null, Modifier.size(16.dp))
             Spacer(Modifier.width(4.dp))
             Text(tr("chatmcp.badge", on, enabled), style = MaterialTheme.typography.labelMedium)
         }
@@ -547,7 +679,7 @@ private fun McpChatButton(state: AppState, conv: Conversation) {
                 Spacer(Modifier.height(6.dp))
                 McpChatScope.rows(servers, conv.mcpOff).forEach { row -> McpChatRow(state, conv, row) }
                 HorizontalDivider(Modifier.padding(vertical = 6.dp))
-                TextButton(onClick = { open = false; state.showSettings = true }) { Text(tr("chatmcp.open_settings")) }
+                TextButton(onClick = { open = false; state.openSettings(SettingsPage.MCP) }) { Text(tr("chatmcp.open_settings")) }
             }
         }
     }
@@ -575,7 +707,7 @@ private fun McpChatRow(state: AppState, conv: Conversation, row: McpChatScope.Ro
                     color = if (st.state == "error") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
             }
             if (tools.isNotEmpty()) IconButton(onClick = { showTools = !showTools }, modifier = Modifier.size(28.dp)) {
-                Icon(if (showTools) Icons.Default.ExpandLess else Icons.Default.ExpandMore, tr(if (showTools) "tool.collapse" else "tool.expand"), Modifier.size(18.dp))
+                Icon(if (showTools) Lucide.ChevronUp else Lucide.ChevronDown, tr(if (showTools) "tool.collapse" else "tool.expand"), Modifier.size(18.dp))
             }
             if (row.onInChat && sv.isStdio && st.state != "running" && st.state != "starting")
                 TextButton(onClick = { state.connectMcp(sv) }) { Text(tr("mcp.connect")) }
@@ -591,21 +723,69 @@ private fun McpChatRow(state: AppState, conv: Conversation, row: McpChatScope.Ro
     }
 }
 
+/** Open WebUI–style start screen (UI-REFRESH §3.3): mark, value line, three runnable examples, big composer. */
 @Composable
 private fun EmptyState(state: AppState) {
     val s = state.settings
-    Column(Modifier.fillMaxSize().padding(40.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-        Text(tr("empty.headline"), style = MaterialTheme.typography.headlineMedium)
-        Spacer(Modifier.height(8.dp))
-        Text(
-            "${s.activeProvider.label} · ${s.provider().effectiveModel(s.activeProvider)}" +
-                (if (s.toolsEnabled) tr("empty.tools_on", s.shell.label) else tr("empty.tools_off")),
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        if (s.provider().apiKey.isBlank() && s.activeProvider != ProviderKind.OPENAI_COMPATIBLE) {
-            Spacer(Modifier.height(16.dp))
-            Button(onClick = { state.showSettings = true }) { Text(tr("empty.add_key")) }
+    val needsKey = s.provider().apiKey.isBlank() && s.activeProvider != ProviderKind.OPENAI_COMPATIBLE
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Column(Modifier.widthIn(max = 760.dp).fillMaxWidth().padding(horizontal = 32.dp).verticalScroll(rememberScrollState()),
+            horizontalAlignment = Alignment.CenterHorizontally) {
+            BrandMark(52.dp)
+            Spacer(Modifier.height(14.dp))
+            Text(tr("empty.headline"), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(6.dp))
+            Text(tr("empty.value"), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "${s.provider().effectiveModel(s.activeProvider)} · ${ShellModel.providerBadge(s.activeProvider, s.provider().effectiveBaseUrl(s.activeProvider))}" +
+                    (if (s.toolsEnabled) tr("empty.tools_on", s.shell.label) else tr("empty.tools_off")),
+                style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
+            )
+            if (needsKey) {
+                Spacer(Modifier.height(14.dp))
+                Button(onClick = { state.openSettings(SettingsPage.MODEL) }) { Text(tr("empty.add_key")) }
+            }
+            Spacer(Modifier.height(22.dp))
+            Composer(state, big = true)
+            Spacer(Modifier.height(10.dp))
+            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                EMPTY_EXAMPLES.forEach { (key, icon) ->
+                    Surface(
+                        shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surface,
+                        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                        modifier = Modifier.weight(1f).clip(RoundedCornerShape(12.dp))
+                            .clickable(enabled = !state.isRunning && !needsKey) { state.send(tr("$key.prompt")) }
+                            .semantics { contentDescription = tr("$key.title") },
+                    ) {
+                        Column(Modifier.padding(12.dp)) {
+                            Icon(icon, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
+                            Spacer(Modifier.height(6.dp))
+                            Text(tr("$key.title"), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, maxLines = 2)
+                            Text(tr("$key.subtitle"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2)
+                        }
+                    }
+                }
+            }
         }
+    }
+}
+
+/** Examples are real actions the agent can run with the default tools (sent in the UI language). */
+private val EMPTY_EXAMPLES = listOf(
+    "empty.ex1" to Lucide.FolderOpen,
+    "empty.ex2" to Lucide.SquareTerminal,
+    "empty.ex3" to Lucide.Languages,
+)
+
+/** The app mark: an accent rounded square with an "M" monogram. */
+@Composable
+internal fun BrandMark(size: androidx.compose.ui.unit.Dp) {
+    Box(Modifier.size(size).clip(RoundedCornerShape(size * 0.28f)).background(
+        androidx.compose.ui.graphics.Brush.linearGradient(listOf(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.secondary))),
+        contentAlignment = Alignment.Center) {
+        Text("M", color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.Bold,
+            fontSize = (size.value * 0.52f).sp, fontFamily = BundledInter)
     }
 }
 
@@ -634,10 +814,10 @@ private fun MessageItem(state: AppState, m: ChatMessage, isLast: Boolean, live: 
                 }
                 if (!live) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                     if (m.text.isNotBlank()) IconButton(onClick = { clipboard.setText(AnnotatedString(m.text)) }, modifier = Modifier.size(28.dp)) {
-                        Icon(Icons.Default.ContentCopy, tr("common.copy"), Modifier.size(15.dp))
+                        Icon(Lucide.Copy, tr("common.copy"), Modifier.size(15.dp))
                     }
                     IconButton(onClick = { editing = true }, modifier = Modifier.size(28.dp), enabled = !state.isRunning) {
-                        Icon(Icons.Default.Edit, tr("msg.edit"), Modifier.size(15.dp))
+                        Icon(Lucide.Pencil, tr("msg.edit"), Modifier.size(15.dp))
                     }
                 }
             }
@@ -659,10 +839,10 @@ private fun MessageItem(state: AppState, m: ChatMessage, isLast: Boolean, live: 
             } else {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     IconButton(onClick = { clipboard.setText(AnnotatedString(m.displayText)) }, modifier = Modifier.size(30.dp)) {
-                        Icon(Icons.Default.ContentCopy, tr("common.copy"), Modifier.size(16.dp))
+                        Icon(Lucide.Copy, tr("common.copy"), Modifier.size(16.dp))
                     }
                     if (isLast) IconButton(onClick = { state.regenerate() }, modifier = Modifier.size(30.dp), enabled = !state.isRunning) {
-                        Icon(Icons.Default.Refresh, tr("msg.regenerate"), Modifier.size(16.dp))
+                        Icon(Lucide.RefreshCw, tr("msg.regenerate"), Modifier.size(16.dp))
                     }
                     m.modelLabel?.let {
                         Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -756,12 +936,12 @@ private fun ReadOnlyChip(calls: List<ToolCall>) {
             modifier = Modifier.clip(RoundedCornerShape(50)).clickable { open = !open }
                 .semantics { contentDescription = tr("tool.readonly_chip", calls.size) }) {
             Row(Modifier.padding(horizontal = 10.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.Check, null, Modifier.size(14.dp), tint = LocalSuccessColor.current)
+                Icon(Lucide.Check, null, Modifier.size(14.dp), tint = LocalSuccessColor.current)
                 Spacer(Modifier.width(6.dp))
                 Text(tr("tool.readonly_chip", calls.size), style = MaterialTheme.typography.labelMedium)
                 Spacer(Modifier.width(8.dp))
                 Text(ToolPresentation.duration(total), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Icon(if (open) Icons.Default.ExpandLess else Icons.Default.ExpandMore, tr(if (open) "tool.collapse" else "tool.expand"), Modifier.size(16.dp))
+                Icon(if (open) Lucide.ChevronUp else Lucide.ChevronDown, tr(if (open) "tool.collapse" else "tool.expand"), Modifier.size(16.dp))
             }
         }
         if (open) Column(Modifier.padding(start = 12.dp)) { calls.forEach { ToolCallCard(it) } }
@@ -778,7 +958,7 @@ private fun ToolGroup(calls: List<ToolCall>) {
             .padding(horizontal = 10.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(if (failed.isEmpty()) Icons.Default.Check else Icons.Default.ErrorOutline, null, Modifier.size(16.dp),
+        Icon(if (failed.isEmpty()) Lucide.Check else Lucide.CircleAlert, null, Modifier.size(16.dp),
             tint = if (failed.isEmpty()) LocalSuccessColor.current else MaterialTheme.colorScheme.error)
         Spacer(Modifier.width(8.dp))
         Text(if (failed.isEmpty()) tr("tool.group", calls.size) else tr("tool.group_failed", calls.size, failed.size),
@@ -788,7 +968,7 @@ private fun ToolGroup(calls: List<ToolCall>) {
             color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
         Text(ToolPresentation.duration(calls.sumOf { it.durationMs ?: 0L }), style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 4.dp))
-        Icon(if (open) Icons.Default.ExpandLess else Icons.Default.ExpandMore, tr(if (open) "tool.collapse" else "tool.expand"), Modifier.size(18.dp))
+        Icon(if (open) Lucide.ChevronUp else Lucide.ChevronDown, tr(if (open) "tool.collapse" else "tool.expand"), Modifier.size(18.dp))
     }
     Column(Modifier.padding(start = 12.dp)) {
         if (open) ToolSegments(calls) else failed.forEach { ToolCallCard(it) }
@@ -796,13 +976,13 @@ private fun ToolGroup(calls: List<ToolCall>) {
 }
 
 internal fun kindIcon(k: ToolPresentation.Kind) = when (k) {
-    ToolPresentation.Kind.SHELL -> Icons.Default.Terminal
-    ToolPresentation.Kind.FILE -> Icons.Default.Description
-    ToolPresentation.Kind.MEMORY -> Icons.Default.Psychology
-    ToolPresentation.Kind.MCP -> Icons.Default.Extension
-    ToolPresentation.Kind.SUBAGENT -> Icons.Default.Groups
-    ToolPresentation.Kind.SCHEDULED -> Icons.Default.Schedule
-    ToolPresentation.Kind.OTHER -> Icons.Default.Build
+    ToolPresentation.Kind.SHELL -> Lucide.SquareTerminal
+    ToolPresentation.Kind.FILE -> Lucide.FileText
+    ToolPresentation.Kind.MEMORY -> Lucide.Brain
+    ToolPresentation.Kind.MCP -> Lucide.Puzzle
+    ToolPresentation.Kind.SUBAGENT -> Lucide.Users
+    ToolPresentation.Kind.SCHEDULED -> Lucide.CalendarClock
+    ToolPresentation.Kind.OTHER -> Lucide.Wrench
 }
 
 /**
@@ -849,9 +1029,9 @@ private fun ToolCallCard(tc: ToolCall) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 when (st) {
                     ToolPresentation.CardState.RUNNING -> CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp, color = tint)
-                    ToolPresentation.CardState.SUCCESS -> Icon(Icons.Default.CheckCircle, tr("tool.state.SUCCESS"), tint = tint, modifier = Modifier.size(16.dp))
-                    ToolPresentation.CardState.FAILED -> Icon(Icons.Default.Error, tr("tool.state.FAILED"), tint = tint, modifier = Modifier.size(16.dp))
-                    ToolPresentation.CardState.DENIED -> Icon(Icons.Default.Block, tr("tool.state.DENIED"), tint = tint, modifier = Modifier.size(16.dp))
+                    ToolPresentation.CardState.SUCCESS -> Icon(Lucide.CircleCheck, tr("tool.state.SUCCESS"), tint = tint, modifier = Modifier.size(16.dp))
+                    ToolPresentation.CardState.FAILED -> Icon(Lucide.CircleAlert, tr("tool.state.FAILED"), tint = tint, modifier = Modifier.size(16.dp))
+                    ToolPresentation.CardState.DENIED -> Icon(Lucide.Ban, tr("tool.state.DENIED"), tint = tint, modifier = Modifier.size(16.dp))
                 }
                 Spacer(Modifier.width(6.dp))
                 Icon(kindIcon(ToolPresentation.kind(tc.name)), null, tint = muted, modifier = Modifier.size(14.dp))
@@ -863,7 +1043,7 @@ private fun ToolCallCard(tc: ToolCall) {
                     color = if (errorLine != null) MaterialTheme.colorScheme.error else muted,
                     maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
                 Text(timeText, style = MaterialTheme.typography.labelSmall, color = tint, modifier = Modifier.padding(horizontal = 4.dp))
-                Icon(if (open) Icons.Default.ExpandLess else Icons.Default.ExpandMore, tr(if (open) "tool.collapse" else "tool.expand"), Modifier.size(18.dp))
+                Icon(if (open) Lucide.ChevronUp else Lucide.ChevronDown, tr(if (open) "tool.collapse" else "tool.expand"), Modifier.size(18.dp))
             }
             if (!open && st == ToolPresentation.CardState.FAILED) {
                 Text(tr("tool.show_details"), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error,
@@ -872,7 +1052,7 @@ private fun ToolCallCard(tc: ToolCall) {
             if (st == ToolPresentation.CardState.DENIED && app != null && !app.isRunning) {
                 TextButton(onClick = { app.requestRetry(tc) }, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
                     modifier = Modifier.padding(start = 34.dp).heightIn(min = 28.dp)) {
-                    Icon(Icons.Default.Refresh, null, Modifier.size(14.dp)); Spacer(Modifier.width(4.dp))
+                    Icon(Lucide.RefreshCw, null, Modifier.size(14.dp)); Spacer(Modifier.width(4.dp))
                     Text(tr("tool.ask_again"), style = MaterialTheme.typography.labelMedium)
                 }
             }
@@ -896,7 +1076,7 @@ private fun ToolCallCard(tc: ToolCall) {
 private fun SectionLabel(label: String, onCopy: () -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp)) {
         Text(label, style = MaterialTheme.typography.labelSmall, modifier = Modifier.weight(1f))
-        IconButton(onClick = onCopy, modifier = Modifier.size(24.dp)) { Icon(Icons.Default.ContentCopy, tr("tool.copy", label), Modifier.size(14.dp)) }
+        IconButton(onClick = onCopy, modifier = Modifier.size(24.dp)) { Icon(Lucide.Copy, tr("tool.copy", label), Modifier.size(14.dp)) }
     }
 }
 
@@ -929,7 +1109,7 @@ private fun prettyJson(s: String): String = runCatching { org.json.JSONObject(s)
 // ---------------------------------------------------------------- Composer
 
 @Composable
-private fun Composer(state: AppState) {
+private fun Composer(state: AppState, big: Boolean = false) {
     var value by remember { mutableStateOf(TextFieldValue("")) }
     val focus = remember { FocusRequester() }
     LaunchedEffect(state.composerFocusTick) { runCatching { focus.requestFocus() } }
@@ -949,12 +1129,12 @@ private fun Composer(state: AppState) {
         IconButton(onClick = {
             val chooser = javax.swing.JFileChooser().apply { isMultiSelectionEnabled = true; dialogTitle = tr("attach.dialog_title") }
             if (chooser.showOpenDialog(null) == javax.swing.JFileChooser.APPROVE_OPTION) state.attachFiles(chooser.selectedFiles.toList())
-        }, modifier = Modifier.size(52.dp)) { Icon(Icons.Default.AttachFile, tr("composer.attach")) }
+        }, modifier = Modifier.size(52.dp)) { Icon(Lucide.Paperclip, tr("composer.attach")) }
         Spacer(Modifier.width(4.dp))
         OutlinedTextField(
             value = value,
             onValueChange = { value = it },
-            modifier = Modifier.weight(1f).heightIn(min = 52.dp, max = 260.dp).focusRequester(focus)
+            modifier = Modifier.weight(1f).heightIn(min = if (big) 96.dp else 52.dp, max = 260.dp).focusRequester(focus)
                 .semantics { contentDescription = tr("composer.a11y") }
                 .tabMovesFocus()
                 .onPreviewKeyEvent { ev ->
@@ -980,14 +1160,14 @@ private fun Composer(state: AppState) {
                 },
             placeholder = { Text(tr("composer.placeholder")) },
             maxLines = 12,
-            shape = RoundedCornerShape(14.dp),
+            shape = RoundedCornerShape(if (big) 18.dp else 14.dp),
         )
         Spacer(Modifier.width(10.dp))
         if (state.isRunning) {
-            FilledTonalIconButton(onClick = { state.stop() }, modifier = Modifier.size(52.dp)) { Icon(Icons.Default.Stop, tr("composer.stop")) }
+            FilledTonalIconButton(onClick = { state.stop() }, modifier = Modifier.size(52.dp)) { Icon(Lucide.Square, tr("composer.stop")) }
         } else {
             FilledIconButton(onClick = { submit() }, enabled = value.text.isNotBlank() || pending.isNotEmpty(), modifier = Modifier.size(52.dp)) {
-                Icon(Icons.Default.Send, tr("composer.send"))
+                Icon(Lucide.SendHorizontal, tr("composer.send"))
             }
         }
     }
@@ -1029,7 +1209,7 @@ internal fun AttachmentChip(state: AppState, a: Attachment, onRemove: (() -> Uni
             val t = thumb
             if (t != null) Image(t, a.fileName, Modifier.size(34.dp).clip(RoundedCornerShape(6.dp)), contentScale = ContentScale.Crop)
             else Icon(
-                when (a.kind) { AttachmentKind.IMAGE -> Icons.Default.Image; AttachmentKind.TEXT -> Icons.Default.Description; else -> Icons.Default.InsertDriveFile },
+                when (a.kind) { AttachmentKind.IMAGE -> Lucide.Image; AttachmentKind.TEXT -> Lucide.FileText; else -> Lucide.File },
                 null, Modifier.size(22.dp),
             )
             Spacer(Modifier.width(6.dp))
@@ -1040,7 +1220,7 @@ internal fun AttachmentChip(state: AppState, a: Attachment, onRemove: (() -> Uni
                     style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1,
                 )
             }
-            if (onRemove != null) IconButton(onClick = onRemove, modifier = Modifier.size(26.dp)) { Icon(Icons.Default.Close, tr("attach.remove", a.fileName), Modifier.size(16.dp)) }
+            if (onRemove != null) IconButton(onClick = onRemove, modifier = Modifier.size(26.dp)) { Icon(Lucide.X, tr("attach.remove", a.fileName), Modifier.size(16.dp)) }
         }
     }
 }

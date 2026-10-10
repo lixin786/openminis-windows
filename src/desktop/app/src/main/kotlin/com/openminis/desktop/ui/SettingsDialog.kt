@@ -2,6 +2,7 @@
 // Copyright (C) OpenMinis contributors. Licensed under the GNU GPL v3 (see LICENSE).
 package com.openminis.desktop.ui
 
+import com.openminis.desktop.ui.icons.Lucide
 import com.openminis.desktop.i18n.AppLanguage
 import com.openminis.desktop.i18n.I18n
 import com.openminis.desktop.i18n.tr
@@ -9,12 +10,6 @@ import com.openminis.desktop.i18n.tr
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Visibility
-import androidx.compose.material.icons.filled.ArrowUpward
-import androidx.compose.material.icons.filled.ArrowDownward
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -30,6 +25,8 @@ import androidx.compose.ui.semantics.selected
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Surface
@@ -47,16 +44,56 @@ import com.openminis.desktop.tools.ShellRunner
 import java.io.File
 import javax.swing.JFileChooser
 
+/** Settings pages (UI-REFRESH §3.4): rail group → section list → detail. */
+enum class SettingsPage(val group: SettingsGroup, val key: String) {
+    MODEL(SettingsGroup.GENERAL, "settings.page.model"),
+    APPEARANCE(SettingsGroup.GENERAL, "settings.page.appearance"),
+    NETWORK(SettingsGroup.GENERAL, "settings.page.network"),
+    TOOLS(SettingsGroup.AGENT, "settings.page.tools"),
+    MCP(SettingsGroup.AGENT, "settings.page.mcp"),
+    SKILLS(SettingsGroup.AGENT, "settings.page.skills"),
+    SUBAGENTS(SettingsGroup.AGENT, "settings.page.subagents"),
+    MEMORY(SettingsGroup.AGENT, "settings.page.memory"),
+    SCHEDULED(SettingsGroup.AGENT, "settings.page.scheduled"),
+    ABOUT(SettingsGroup.SYSTEM, "settings.page.about"),
+    ADVANCED(SettingsGroup.SYSTEM, "settings.page.advanced");
+    companion object { fun of(g: SettingsGroup) = entries.filter { it.group == g } }
+}
+
+enum class SettingsGroup(val key: String) { GENERAL("settings.group.general"), AGENT("settings.group.agent"), SYSTEM("settings.group.system") }
+
+private fun pageIcon(p: SettingsPage) = when (p) {
+    SettingsPage.MODEL -> Lucide.Cpu
+    SettingsPage.APPEARANCE -> Lucide.Palette
+    SettingsPage.NETWORK -> Lucide.Globe
+    SettingsPage.TOOLS -> Lucide.SquareTerminal
+    SettingsPage.MCP -> Lucide.Puzzle
+    SettingsPage.SKILLS -> Lucide.BookOpen
+    SettingsPage.SUBAGENTS -> Lucide.Users
+    SettingsPage.MEMORY -> Lucide.Brain
+    SettingsPage.SCHEDULED -> Lucide.CalendarClock
+    SettingsPage.ABOUT -> Lucide.Info
+    SettingsPage.ADVANCED -> Lucide.ShieldAlert
+}
+
+private fun groupIcon(g: SettingsGroup) = when (g) {
+    SettingsGroup.GENERAL -> Lucide.Settings
+    SettingsGroup.AGENT -> Lucide.Bot
+    SettingsGroup.SYSTEM -> Lucide.Layers
+}
+
 @Composable
 fun SettingsDialog(state: AppState, onClose: () -> Unit) {
     var draft by remember { mutableStateOf(state.settings) }
     var editing by remember { mutableStateOf(state.settings.activeProvider) }
     var subDraft by remember { mutableStateOf(state.subAgentConfig) }
     var mcpDraft by remember { mutableStateOf(state.mcp.servers) }
+    var page by remember { mutableStateOf(state.settingsPage) }
+    LaunchedEffect(page) { state.settingsPage = page }
     val save = { state.updateSettings(draft); state.updateSubAgentConfig(subDraft); if (mcpDraft != state.mcp.servers) state.updateMcpServers(mcpDraft); onClose() }
     DialogWindow(
         onCloseRequest = onClose, title = tr("settings.title"),
-        state = rememberFittedDialogState(720.dp, 820.dp), resizable = true,
+        state = rememberFittedDialogState(960.dp, 760.dp), resizable = true,
         // Esc closes without saving; Ctrl+S / Ctrl+Enter saves.
         onPreviewKeyEvent = { ev ->
             if (ev.type != androidx.compose.ui.input.key.KeyEventType.KeyDown) false
@@ -70,23 +107,58 @@ fun SettingsDialog(state: AppState, onClose: () -> Unit) {
         MinisTheme(state.settings) {
             Surface(Modifier.fillMaxSize()) {
                 Column(Modifier.fillMaxSize()) {
-                    ScrollColumn(Modifier.weight(1f).fillMaxWidth()) {
-                        Section(tr("settings.language"))
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(tr("settings.language.label"), Modifier.width(140.dp))
-                            Dropdown(AppLanguage.of(draft.language), AppLanguage.entries,
-                                { if (it == AppLanguage.SYSTEM) tr("settings.language.system", AppLanguage.of(I18n.resolve("system")).nativeName) else it.nativeName },
-                                { draft = draft.copy(language = it.code) })
+                    Row(Modifier.weight(1f).fillMaxWidth()) {
+                        // Rail: groups.
+                        Column(Modifier.width(64.dp).fillMaxHeight().background(MaterialTheme.colorScheme.surfaceVariant).padding(vertical = 12.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally) {
+                            SettingsGroup.entries.forEach { g ->
+                                val sel = page.group == g
+                                Column(
+                                    Modifier.padding(vertical = 4.dp).clip(RoundedCornerShape(10.dp))
+                                        .background(if (sel) MaterialTheme.colorScheme.primary.copy(alpha = 0.16f) else androidx.compose.ui.graphics.Color.Transparent)
+                                        .clickable(role = androidx.compose.ui.semantics.Role.Tab) { if (!sel) page = SettingsPage.of(g).first() }
+                                        .semantics { contentDescription = tr(g.key); selected = sel }
+                                        .padding(horizontal = 6.dp, vertical = 8.dp).width(48.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                ) {
+                                    Icon(groupIcon(g), null, Modifier.size(20.dp), tint = if (sel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text(tr(g.key), style = MaterialTheme.typography.labelSmall, maxLines = 1,
+                                        color = if (sel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
                         }
-                        Hint(tr("settings.language.hint"))
-
+                        // Section navigation within the group.
+                        Column(Modifier.width(190.dp).fillMaxHeight().padding(10.dp)) {
+                            Text(tr(page.group.key), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(start = 10.dp, bottom = 6.dp))
+                            SettingsPage.of(page.group).forEach { p ->
+                                val sel = p == page
+                                Row(
+                                    Modifier.fillMaxWidth().padding(vertical = 1.dp).clip(RoundedCornerShape(8.dp))
+                                        .background(if (sel) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f) else androidx.compose.ui.graphics.Color.Transparent)
+                                        .clickable(role = androidx.compose.ui.semantics.Role.Tab) { page = p }
+                                        .semantics { selected = sel }
+                                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Icon(pageIcon(p), null, Modifier.size(16.dp),
+                                        tint = if (p == SettingsPage.ADVANCED) MaterialTheme.colorScheme.error else if (sel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Spacer(Modifier.width(10.dp))
+                                    Text(tr(p.key), style = MaterialTheme.typography.bodyMedium, fontWeight = if (sel) FontWeight.SemiBold else null)
+                                }
+                            }
+                        }
+                        VerticalDivider()
+                        // Detail.
+                        ScrollColumn(Modifier.weight(1f).fillMaxHeight(), state = rememberScrollState().also { }) {
+                            Text(tr(page.key), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
+                            when (page) {
+                                SettingsPage.MODEL -> {
                         Section(tr("settings.provider"))
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(tr("settings.active_provider"), Modifier.width(140.dp))
+                        Field(tr("settings.active_provider")) {
                             Dropdown(draft.activeProvider, ProviderKind.entries, { it.label }, { draft = draft.copy(activeProvider = it); editing = it })
                         }
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(tr("settings.edit_for"), Modifier.width(140.dp))
+                        Field(tr("settings.edit_for")) {
                             Dropdown(editing, ProviderKind.entries, { k -> k.label + if (draft.provider(k).apiKey.isNotBlank()) "  ✓" else "" }, { editing = it })
                         }
                         val ps = draft.provider(editing)
@@ -97,7 +169,7 @@ fun SettingsDialog(state: AppState, onClose: () -> Unit) {
                             visualTransformation = if (showKey) VisualTransformation.None else PasswordVisualTransformation(),
                             trailingIcon = {
                                 IconButton(onClick = { showKey = !showKey }) {
-                                    Icon(if (showKey) Icons.Default.VisibilityOff else Icons.Default.Visibility, tr("settings.show_hide"))
+                                    Icon(if (showKey) Lucide.EyeOff else Lucide.Eye, tr("settings.show_hide"))
                                 }
                             },
                         )
@@ -110,8 +182,7 @@ fun SettingsDialog(state: AppState, onClose: () -> Unit) {
                             label = { Text(tr("settings.model_id", editing.defaultModel)) }, singleLine = true, modifier = Modifier.fillMaxWidth().tabMovesFocus(),
                             supportingText = { Text(tr("settings.suggestions", DesktopProviderFactory.suggestedModels(editing).take(6).joinToString(", "))) },
                         )
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(tr("settings.image_input"), Modifier.width(140.dp))
+                        Field(tr("settings.image_input")) {
                             Dropdown(
                                 ps.imageInput, listOf(null, true, false),
                                 { when (it) { null -> tr("settings.image.auto"); true -> tr("settings.image.on"); false -> tr("settings.image.off") } },
@@ -128,9 +199,9 @@ fun SettingsDialog(state: AppState, onClose: () -> Unit) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text("${i + 1}.  ${ref.label}" + if (draft.provider(ref.provider).apiKey.isBlank() && ref.provider != ProviderKind.OPENAI_COMPATIBLE) tr("settings.fallback.no_key") else "",
                                     Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
-                                IconButton(onClick = { draft = draft.copy(fallbackModels = chain.toMutableList().also { l -> java.util.Collections.swap(l, i, i - 1) }) }, enabled = i > 0) { Icon(Icons.Default.ArrowUpward, tr("common.move_up")) }
-                                IconButton(onClick = { draft = draft.copy(fallbackModels = chain.toMutableList().also { l -> java.util.Collections.swap(l, i, i + 1) }) }, enabled = i < chain.lastIndex) { Icon(Icons.Default.ArrowDownward, tr("common.move_down")) }
-                                IconButton(onClick = { draft = draft.copy(fallbackModels = chain.filterIndexed { j, _ -> j != i }) }) { Icon(Icons.Default.Delete, tr("common.remove")) }
+                                IconButton(onClick = { draft = draft.copy(fallbackModels = chain.toMutableList().also { l -> java.util.Collections.swap(l, i, i - 1) }) }, enabled = i > 0) { Icon(Lucide.ArrowUp, tr("common.move_up")) }
+                                IconButton(onClick = { draft = draft.copy(fallbackModels = chain.toMutableList().also { l -> java.util.Collections.swap(l, i, i + 1) }) }, enabled = i < chain.lastIndex) { Icon(Lucide.ArrowDown, tr("common.move_down")) }
+                                IconButton(onClick = { draft = draft.copy(fallbackModels = chain.filterIndexed { j, _ -> j != i }) }) { Icon(Lucide.Trash, tr("common.remove")) }
                             }
                         }
                         var addKind by remember { mutableStateOf(ProviderKind.OPENAI) }
@@ -151,17 +222,8 @@ fun SettingsDialog(state: AppState, onClose: () -> Unit) {
                         Hint(tr("settings.suggestions", DesktopProviderFactory.suggestedModels(addKind).take(5).joinToString(", ")))
                         Toggle(tr("settings.fallback.any_error"), draft.fallbackOnAnyError) { draft = draft.copy(fallbackOnAnyError = it) }
 
-                        Section(tr("settings.network"))
-                        NetworkSection(draft.network) { draft = draft.copy(network = it) }
-
                         Section(tr("settings.context"))
                         Toggle(tr("settings.auto_compact"), draft.autoCompact) { draft = draft.copy(autoCompact = it) }
-                        NumberField(tr("settings.ctx_override"), draft.contextWindowOverride, Modifier.fillMaxWidth()) {
-                            draft = draft.copy(contextWindowOverride = it.coerceIn(0, 10_000_000))
-                        }
-                        NumberField(tr("settings.inline_chars"), draft.maxInlineTextChars, Modifier.fillMaxWidth()) {
-                            draft = draft.copy(maxInlineTextChars = it.coerceIn(1000, 2_000_000))
-                        }
                         Hint(tr("settings.manual_compact"))
 
                         Section(tr("settings.agent"))
@@ -175,15 +237,25 @@ fun SettingsDialog(state: AppState, onClose: () -> Unit) {
                             Spacer(Modifier.width(12.dp))
                             NumberField(tr("settings.max_rounds"), draft.maxToolRounds, Modifier.weight(1f)) { draft = draft.copy(maxToolRounds = it.coerceIn(1, 500)) }
                         }
-                        AppearanceSection(draft) { draft = it }
+                                }
+                                SettingsPage.APPEARANCE -> {
+                        Section(tr("settings.language"))
+                        Field(tr("settings.language.label")) {
+                            Dropdown(AppLanguage.of(draft.language), AppLanguage.entries,
+                                { if (it == AppLanguage.SYSTEM) tr("settings.language.system", AppLanguage.of(I18n.resolve("system")).nativeName) else it.nativeName },
+                                { draft = draft.copy(language = it.code) })
+                        }
+                        Hint(tr("settings.language.hint"))
 
+                        AppearanceSection(draft) { draft = it }
+                                }
+                                SettingsPage.NETWORK -> {
+                        NetworkSection(draft.network) { draft = draft.copy(network = it) }
+                                }
+                                SettingsPage.TOOLS -> {
                         Section(tr("settings.tools"))
                         Toggle(tr("settings.tools_enable"), draft.toolsEnabled) { draft = draft.copy(toolsEnabled = it) }
-                        Toggle(tr("settings.confirm_shell"), draft.confirmShellCommands) { draft = draft.copy(confirmShellCommands = it) }
-                        Toggle(tr("settings.readonly_auto"), draft.autoApproveReadOnlyShell) { draft = draft.copy(autoApproveReadOnlyShell = it) }
-                        Hint(tr("settings.security_hint"))
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(tr("settings.shell"), Modifier.width(140.dp))
+                        Field(tr("settings.shell")) {
                             Dropdown(
                                 draft.shell, ShellKind.entries,
                                 { I18n.trOr("shell.${it.name}", it.label) + if (it == ShellKind.WSL && !ShellRunner.wslAvailable) tr("settings.not_detected") else "" },
@@ -205,12 +277,16 @@ fun SettingsDialog(state: AppState, onClose: () -> Unit) {
                             }) { Text(tr("settings.browse")) }
                         }
 
-                        Section(tr("settings.mcp"))
-                        McpSection(state, mcpDraft) { mcpDraft = it }
+                                }
+                                SettingsPage.MCP -> McpSection(state, mcpDraft) { mcpDraft = it }
+                                SettingsPage.SKILLS -> {
+                        Section(tr("settings.skills"))
+                        Toggle(tr("settings.skills_enable"), draft.skillsEnabled) { draft = draft.copy(skillsEnabled = it) }
+                        SkillsSection(state, draft.disabledSkills) { draft = draft.copy(disabledSkills = it) }
 
-                        Section(tr("settings.subagents"))
-                        SubAgentSection(subDraft, draft, state.toolNames()) { subDraft = it }
-
+                                }
+                                SettingsPage.SUBAGENTS -> SubAgentSection(subDraft, draft, state.toolNames()) { subDraft = it }
+                                SettingsPage.MEMORY -> {
                         Section(tr("settings.memory"))
                         Toggle(tr("settings.memory_enable"), draft.memoryEnabled) { draft = draft.copy(memoryEnabled = it) }
                         Row {
@@ -219,13 +295,41 @@ fun SettingsDialog(state: AppState, onClose: () -> Unit) {
                             OutlinedButton(onClick = { state.openInExplorer(state.memory.dir) }) { Text(tr("settings.open_memory")) }
                         }
 
-                        Section(tr("settings.skills"))
-                        Toggle(tr("settings.skills_enable"), draft.skillsEnabled) { draft = draft.copy(skillsEnabled = it) }
-                        SkillsSection(state, draft.disabledSkills) { draft = draft.copy(disabledSkills = it) }
-
+                                }
+                                SettingsPage.SCHEDULED -> {
+                        Hint(tr("settings.scheduled.hint"))
+                        OutlinedButton(onClick = { state.showScheduled = true }) {
+                            Icon(Lucide.CalendarClock, null, Modifier.size(16.dp)); Spacer(Modifier.width(6.dp)); Text(tr("settings.scheduled.open"))
+                        }
+                                }
+                                SettingsPage.ABOUT -> {
+                        AboutPage()
                         Section(tr("settings.data"))
                         Hint(tr("settings.app_data", state.paths.root.absolutePath))
                         OutlinedButton(onClick = { state.openInExplorer(state.paths.root) }) { Text(tr("menu.open_data")) }
+                                }
+                                SettingsPage.ADVANCED -> {
+                        Surface(color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f), shape = RoundedCornerShape(8.dp), modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                            Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Lucide.TriangleAlert, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.error)
+                                Spacer(Modifier.width(8.dp))
+                                Text(tr("settings.advanced.warning"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onErrorContainer)
+                            }
+                        }
+                        Section(tr("settings.advanced.approvals"))
+                        Toggle(tr("settings.confirm_shell"), draft.confirmShellCommands) { draft = draft.copy(confirmShellCommands = it) }
+                        Toggle(tr("settings.readonly_auto"), draft.autoApproveReadOnlyShell) { draft = draft.copy(autoApproveReadOnlyShell = it) }
+                        Hint(tr("settings.security_hint"))
+                        Section(tr("settings.advanced.context"))
+                        NumberField(tr("settings.ctx_override"), draft.contextWindowOverride, Modifier.fillMaxWidth()) {
+                            draft = draft.copy(contextWindowOverride = it.coerceIn(0, 10_000_000))
+                        }
+                        NumberField(tr("settings.inline_chars"), draft.maxInlineTextChars, Modifier.fillMaxWidth()) {
+                            draft = draft.copy(maxInlineTextChars = it.coerceIn(1000, 2_000_000))
+                        }
+                                }
+                            }
+                        }
                     }
                     HorizontalDivider()
                     Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.End) {
@@ -239,20 +343,42 @@ fun SettingsDialog(state: AppState, onClose: () -> Unit) {
     }
 }
 
+/** Settings › About: version, license, bundled third-party assets (UI-REFRESH §4). */
+@Composable private fun AboutPage() {
+    Spacer(Modifier.height(12.dp))
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        BrandMark(40.dp)
+        Spacer(Modifier.width(12.dp))
+        Column {
+            Text("OpenMinis", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+            Text(tr("about.version", com.openminis.app.BuildConfig.VERSION_NAME), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+    Hint(tr("about.license"))
+    Section(tr("about.third_party"))
+    listOf(
+        "Lucide icons — ISC License",
+        "Inter — SIL Open Font License 1.1",
+        "JetBrains Mono — SIL Open Font License 1.1",
+        "multiplatform-markdown-renderer — Apache-2.0",
+        "OkHttp, kotlinx — Apache-2.0 · org.json — JSON License (public domain) · jieba-analysis — Apache-2.0",
+    ).forEach { Text("· $it", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(vertical = 1.dp)) }
+    Hint(tr("about.third_party.hint"))
+}
 /** Settings › Appearance: theme mode, accent, text size, UI font, code font, live preview. */
 @Composable private fun AppearanceSection(d: com.openminis.desktop.core.AppSettings, onChange: (com.openminis.desktop.core.AppSettings) -> Unit) {
     val installed = remember {
         runCatching { java.awt.GraphicsEnvironment.getLocalGraphicsEnvironment().availableFontFamilyNames.toList() }.getOrDefault(emptyList())
     }
-    val fontLabel: (String) -> String = { if (it.isBlank()) tr("appearance.font_default") else it }
+    val uiLabel: (String) -> String = { when (it) { "" -> tr("appearance.font_bundled_ui"); Appearance.SYSTEM_FONT -> tr("appearance.font_system"); else -> it } }
+    val monoLabel: (String) -> String = { when (it) { "" -> tr("appearance.font_bundled_mono"); Appearance.SYSTEM_FONT -> tr("appearance.font_system"); else -> it } }
     Section(tr("appearance.title"))
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(tr("appearance.theme"), Modifier.width(140.dp))
+    Field(tr("appearance.theme")) {
         Dropdown(Appearance.ThemeMode.of(d.darkTheme), Appearance.ThemeMode.entries, { tr("appearance.theme.${it.name.lowercase()}") },
             { onChange(d.copy(darkTheme = it.dark)) })
     }
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 4.dp)) {
-        Text(tr("appearance.accent"), Modifier.width(140.dp))
+        Text(tr("appearance.accent"), style = MaterialTheme.typography.labelLarge, modifier = Modifier.width(110.dp))
         val current = Appearance.Accent.of(d.accent)
         Appearance.Accent.entries.forEach { a ->
             val name = tr("appearance.accent.${a.id}")
@@ -267,19 +393,16 @@ fun SettingsDialog(state: AppState, onClose: () -> Unit) {
         Spacer(Modifier.width(6.dp))
         Text(tr("appearance.accent.${current.id}"), style = MaterialTheme.typography.bodySmall)
     }
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(tr("appearance.size"), Modifier.width(140.dp))
+    Field(tr("appearance.size")) {
         val cur = Appearance.SCALES.minByOrNull { kotlin.math.abs(it - Appearance.clampScale(d.fontScale)) } ?: 1f
         Dropdown(cur, Appearance.SCALES, { "${Appearance.percent(it)} %" + if (it == 1f) tr("appearance.size_default") else "" },
             { onChange(d.copy(fontScale = it)) })
     }
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(tr("appearance.ui_font"), Modifier.width(140.dp))
-        Dropdown(d.uiFont, Appearance.fontChoices(installed, Appearance.UI_RECOMMENDED, d.uiFont), fontLabel, { onChange(d.copy(uiFont = it)) })
+    Field(tr("appearance.ui_font")) {
+        Dropdown(d.uiFont, Appearance.fontChoices(installed, Appearance.UI_RECOMMENDED, d.uiFont), uiLabel, { onChange(d.copy(uiFont = it)) })
     }
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(tr("appearance.mono_font"), Modifier.width(140.dp))
-        Dropdown(d.monoFont, Appearance.fontChoices(installed, Appearance.MONO_RECOMMENDED, d.monoFont), fontLabel, { onChange(d.copy(monoFont = it)) })
+    Field(tr("appearance.mono_font")) {
+        Dropdown(d.monoFont, Appearance.fontChoices(installed, Appearance.MONO_RECOMMENDED, d.monoFont), monoLabel, { onChange(d.copy(monoFont = it)) })
     }
     // Preview in the draft's settings (the dialog itself keeps the saved ones until Save).
     MinisTheme(d) {
@@ -300,6 +423,16 @@ fun SettingsDialog(state: AppState, onClose: () -> Unit) {
     HorizontalDivider(Modifier.padding(vertical = 6.dp))
 }
 
+/** Vertical form field (UI-REFRESH §3.4): label → control → grey hint. */
+@Composable internal fun Field(label: String, hint: String? = null, content: @Composable () -> Unit) {
+    Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+        Text(label, style = MaterialTheme.typography.labelLarge)
+        Spacer(Modifier.height(4.dp))
+        content()
+        if (hint != null) Hint(hint)
+    }
+}
+
 @Composable internal fun Hint(text: String) =
     Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 4.dp))
 
@@ -313,16 +446,14 @@ fun SettingsDialog(state: AppState, onClose: () -> Unit) {
 }
 
 @Composable private fun NetworkSection(n: com.openminis.desktop.net.NetworkSettings, onChange: (com.openminis.desktop.net.NetworkSettings) -> Unit) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(tr("net.proxy"), Modifier.width(140.dp))
+    Field(tr("net.proxy")) {
         Dropdown(n.proxyMode, com.openminis.desktop.net.ProxyMode.entries, { I18n.trOr("net.mode.${it.name}", it.label) }, { onChange(n.copy(proxyMode = it)) })
     }
     when (n.proxyMode) {
         com.openminis.desktop.net.ProxyMode.SYSTEM -> Hint(tr("net.hint.system"))
         com.openminis.desktop.net.ProxyMode.NONE -> Hint(tr("net.hint.none"))
         com.openminis.desktop.net.ProxyMode.MANUAL -> {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(tr("net.type"), Modifier.width(140.dp))
+            Field(tr("net.type")) {
                 Dropdown(n.proxyType, com.openminis.desktop.net.ProxyType.entries, { if (it == com.openminis.desktop.net.ProxyType.HTTP) "HTTP / HTTPS (CONNECT)" else "SOCKS5" }, { onChange(n.copy(proxyType = it)) })
             }
             Row {
@@ -344,8 +475,7 @@ fun SettingsDialog(state: AppState, onClose: () -> Unit) {
     // 3-second watchdog behind. The watchdog clamps (and treats < 3 as the 20 s default) when it arms.
     NumberField(tr("net.connect_timeout"), n.connectTimeoutSeconds, Modifier.fillMaxWidth()) { onChange(n.copy(connectTimeoutSeconds = it)) }
     Hint(tr("net.connect_timeout.hint"))
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(tr("net.http"), Modifier.width(140.dp))
+    Field(tr("net.http")) {
         Dropdown(n.httpProtocol, com.openminis.desktop.net.HttpProtocolMode.entries, { I18n.trOr("net.http.${it.name}", it.label) }, { onChange(n.copy(httpProtocol = it)) })
     }
     Hint(when (n.httpProtocol) {

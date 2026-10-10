@@ -180,6 +180,34 @@ class AppState(val paths: AppPaths, private val scope: CoroutineScope) {
     /** Partial reply of a scheduled run, per conversation (shown like a live reply when that chat is open). */
     val scheduledStreaming = mutableStateMapOf<String, ChatMessage>()
     var showScheduled by mutableStateOf(false)
+    /** Settings window page (kept between openings; "open settings" buttons can jump to a page). */
+    var settingsPage by mutableStateOf(SettingsPage.MODEL)
+    fun openSettings(page: SettingsPage? = null) { page?.let { settingsPage = it }; showSettings = true }
+    /** Toolbar layout toggle: hide / show the conversation list. */
+    var sidebarCollapsed by mutableStateOf(false)
+
+    // ---- unread (in memory): a conversation updated after it was last on screen ----
+    private val appStartedAt = System.currentTimeMillis()
+    private val seenAt = androidx.compose.runtime.mutableStateMapOf<String, Long>()
+    fun isUnread(c: Conversation): Boolean = c.id != selectedId && c.updatedAt > (seenAt[c.id] ?: appStartedAt)
+    fun markSeen(c: Conversation) { if ((seenAt[c.id] ?: 0L) < c.updatedAt) seenAt[c.id] = c.updatedAt }
+
+    /** Toolbar › Export: the selected conversation as Markdown (save dialog). */
+    fun exportSelected() {
+        val c = selected ?: return
+        if (c.messages.isEmpty()) return
+        val title = c.displayTitle()
+        val chooser = javax.swing.JFileChooser().apply {
+            dialogTitle = com.openminis.desktop.i18n.I18n.tr("export.title")
+            selectedFile = java.io.File(title.replace(Regex("[\\\\/:*?\"<>|]"), "_").take(80) + ".md")
+        }
+        if (chooser.showSaveDialog(null) != javax.swing.JFileChooser.APPROVE_OPTION) return
+        val f = chooser.selectedFile.let { if (it.name.contains('.')) it else java.io.File(it.path + ".md") }
+        val md = ShellModel.markdown(c, title, com.openminis.desktop.i18n.I18n.tr("export.user"), com.openminis.desktop.i18n.I18n.tr("export.assistant"))
+        runCatching { f.writeText(md, Charsets.UTF_8) }
+            .onSuccess { toast = com.openminis.desktop.i18n.I18n.tr("export.done", f.absolutePath) }
+            .onFailure { toast = com.openminis.desktop.i18n.I18n.tr("export.failed", it.message ?: it.javaClass.simpleName) }
+    }
     /** Bumped when a task or its run records change (the Scheduled tasks window recomposes). */
     var scheduledTick by mutableStateOf(0)
         private set

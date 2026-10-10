@@ -44,7 +44,7 @@ class I18nTest {
         val en = I18n.table("en")
         // Strings that are the same in every language (symbols, product names, key hints).
         val same = setOf("msg.tokens", "approval.remember_button", "skills.version", "mcp.command", "settings.edit_global",
-            "settings.shell", "net.http.HTTP1_ONLY", "mcp.tools", "quote", "list_sep", "chatmcp.badge", "appearance.preview_text")
+            "settings.shell", "net.http.HTTP1_ONLY", "mcp.tools", "quote", "list_sep", "chatmcp.badge", "appearance.preview_text", "settings.page.mcp", "time.date")
         for (l in listOf("zh-CN", "zh-TW")) {
             val t = I18n.table(l)
             val untranslated = en.keys.filter { it !in same && t[it] == en[it] }

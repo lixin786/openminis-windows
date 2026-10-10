@@ -219,6 +219,16 @@ symlink 不得逃逸（`~/link -> /tmp` 这类）；目标不存在时解析最�
 - 新增文案三语齐全；测试 `UiRefreshBatch1Test`（8）。
 - batch11.1 修复：① 两个会话文件带同一 id（同步冲突副本、备份还原）时主线程抛 LazyColumn `Key … was already used`——加载时按 id 去重，保留最近更新的那份，其余只记日志、不删文件。② 风险提示条「涉及工作区之外的路径」误报：绝对路径 / `~` / `..` 经 PathGuard（realpath、符号链接、Windows 大小写）确认确实落在工作区内时不再报；变量、`%X%`、`HKLM:` 等 provider 路径、ADS、UNC、参数值形式照旧报（安全侧）。测试 `Batch11FixesTest`（3）。
 
+### UI 改版第二批（batch12，规格见 UI-REFRESH.md §三、§四）
+
+- 侧栏：每行「标题 + 相对时间」（刚刚 / 3 分钟前 / 2 小时前 / 昨天 / 4 天前 / 日期，30 秒刷新）；悬停时相对时间换成「…」菜单（重命名 / 置顶 / 删除，右键同一菜单）；分组改为 已置顶 → 今天 → 昨天 → 7 天内 → 更早；进行中的会话左侧主色圆点呼吸闪烁，未读（离开后有新内容，含定时任务新开的会话）左侧圆点 + 标题加粗。行内重命名保持不变。
+- 顶栏：左侧侧栏开关（收起后显示品牌标记），**模型药丸**「模型名 | 提供方徽标」替代裸 provider 名——自定义 OpenAI 兼容端点显示主机名（如 `api.siliconflow.cn`、`localhost:11434`）；点击药丸弹出提供方 / 推荐模型 / 自定义模型 ID / 模型设置；思考档位改为小 chip；`上文 ≈x / y` 弱化为灰色小字；右侧 压缩 / 搜索（Ctrl+F）/ 导出 Markdown。
+- 空态：品牌标记 + 一句价值主张 + 当前模型小字 + 居中大输入框 + 3 张示例卡片（列出工作区文件 / 用 PowerShell 查日期 / 把 readme 改成中文），点击直接发送；未配置密钥时示例不可点、显示「添加 API 密钥」。
+- 设置：左侧分组 rail（通用 / 智能体 / 系统）+ 分区导航 + 右侧详情。分区：模型、外观、网络 / 工具与 Shell、MCP、技能、子代理、记忆、计划任务 / 关于、高级·危险。「每条命令都确认」「只读命令免确认」和上下文窗口覆盖、内联字符上限移到「高级 / 危险」并加警示条；表单行改为「标签 → 控件 → 灰色 hint」纵向排布；关于页列出版本、GPLv3 与第三方组件许可。工具卡片 MCP 面板的「打开设置」直达 MCP 分区。
+- 图标：全部换成 **Lucide（ISC）**。没有引第三方图标库——用 `tools/gen-lucide-icons.py` 从 lucide-static 1.55.0 的 `icon-nodes.json` 生成所需的 57 个 ImageVector（`ui/icons/LucideIcons.kt`），并**移除了 `compose.materialIconsExtended` 依赖**（发行包体积明显变小）。许可证在 `third_party/lucide/LICENSE`。
+- 字体：内置 **Inter**（Regular/Medium/SemiBold/Bold）和 **JetBrains Mono**（Regular/Medium/Bold），共约 2.4 MB，均为 SIL OFL-1.1（`third_party/inter`、`third_party/jetbrains-mono`）。界面默认 Inter，中文字形由 Skia 按字回退到系统中文字体（简中 Windows 为微软雅黑）；代码默认 JetBrains Mono。**Noto Sans SC / Sarasa 没有内置**（单字重 8–17 MB）：已安装的话可在 设置 › 外观 里选，选项新增「系统默认」。
+- 新增文案三语齐全；测试 `Batch12ShellTest`。
+
 ## 构建
 
 ```bash

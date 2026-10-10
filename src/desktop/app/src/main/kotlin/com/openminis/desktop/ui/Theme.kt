@@ -34,6 +34,39 @@ fun systemFamily(name: String, fallback: FontFamily): FontFamily =
         SystemFont(name, FontWeight.SemiBold), SystemFont(name, FontWeight.Bold),
     )
 
+/**
+ * Bundled fonts (SIL OFL-1.1, third_party/inter, third_party/jetbrains-mono): Inter for the UI and JetBrains Mono
+ * for code. Chinese glyphs are not in them; Skia falls back per glyph to the system CJK font (Microsoft YaHei on
+ * zh-CN Windows), so mixed text keeps Inter's Latin and the system's Chinese.
+ */
+val BundledInter: FontFamily by lazy {
+    FontFamily(
+        androidx.compose.ui.text.platform.Font("fonts/Inter-Regular.ttf", FontWeight.Normal),
+        androidx.compose.ui.text.platform.Font("fonts/Inter-Medium.ttf", FontWeight.Medium),
+        androidx.compose.ui.text.platform.Font("fonts/Inter-SemiBold.ttf", FontWeight.SemiBold),
+        androidx.compose.ui.text.platform.Font("fonts/Inter-Bold.ttf", FontWeight.Bold),
+    )
+}
+val BundledJetBrainsMono: FontFamily by lazy {
+    FontFamily(
+        androidx.compose.ui.text.platform.Font("fonts/JetBrainsMono-Regular.ttf", FontWeight.Normal),
+        androidx.compose.ui.text.platform.Font("fonts/JetBrainsMono-Medium.ttf", FontWeight.Medium),
+        androidx.compose.ui.text.platform.Font("fonts/JetBrainsMono-Bold.ttf", FontWeight.Bold),
+    )
+}
+
+/** Settings value: "" = bundled font, [Appearance.SYSTEM_FONT] = the platform default, anything else = installed family. */
+fun uiFamily(name: String): FontFamily = when (name) {
+    "" -> BundledInter
+    Appearance.SYSTEM_FONT -> FontFamily.Default
+    else -> systemFamily(name, BundledInter)
+}
+fun monoFamily(name: String): FontFamily = when (name) {
+    "" -> BundledJetBrainsMono
+    Appearance.SYSTEM_FONT -> FontFamily.Monospace
+    else -> systemFamily(name, BundledJetBrainsMono)
+}
+
 private fun TextStyle.f(ff: FontFamily) = copy(fontFamily = ff)
 
 private fun typographyWith(ff: FontFamily?): Typography {
@@ -66,8 +99,8 @@ fun MinisTheme(
         primary = Color(a.light), secondary = Color(a.lightSecondary),
         background = Color(0xFFFAFAFC), surface = Color.White, surfaceVariant = Color(0xFFF0F1F6),
     )
-    val typography = remember(uiFont) { typographyWith(uiFont.takeIf { it.isNotBlank() }?.let { systemFamily(it, FontFamily.Default) }) }
-    val mono = remember(monoFont) { systemFamily(monoFont, FontFamily.Monospace) }
+    val typography = remember(uiFont) { typographyWith(uiFamily(uiFont)) }
+    val mono = remember(monoFont) { monoFamily(monoFont) }
     val base = LocalDensity.current
     val scale = Appearance.clampScale(fontScale)
     CompositionLocalProvider(

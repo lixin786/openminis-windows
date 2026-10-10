@@ -1,4 +1,5 @@
 package com.openminis.desktop.ui
+import com.openminis.desktop.ui.icons.Lucide
 import com.openminis.desktop.i18n.I18n
 import com.openminis.desktop.i18n.tr
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -20,8 +21,6 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -99,12 +98,12 @@ internal fun isInline(state: AppState, p: PendingApproval): Boolean =
     p.request.risk == Risk.LOW && !state.showSettings && !state.showScheduled
 
 private fun approvalIcon(k: ApprovalKind) = when (k) {
-    ApprovalKind.SHELL -> Icons.Default.Terminal
-    ApprovalKind.FILE -> Icons.Default.Description
-    ApprovalKind.MCP_START, ApprovalKind.MCP_CALL -> Icons.Default.Extension
-    ApprovalKind.SCHEDULED -> Icons.Default.Schedule
-    ApprovalKind.SUBAGENT -> Icons.Default.Groups
-    ApprovalKind.OTHER -> Icons.Default.Security
+    ApprovalKind.SHELL -> Lucide.SquareTerminal
+    ApprovalKind.FILE -> Lucide.FileText
+    ApprovalKind.MCP_START, ApprovalKind.MCP_CALL -> Lucide.Puzzle
+    ApprovalKind.SCHEDULED -> Lucide.CalendarClock
+    ApprovalKind.SUBAGENT -> Lucide.Users
+    ApprovalKind.OTHER -> Lucide.Shield
 }
 
 @Composable
@@ -179,7 +178,7 @@ internal fun ApprovalDialog(state: AppState, p: PendingApproval) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(tr("approval.raw"), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
                     IconButton(onClick = { clipboard.setText(AnnotatedString(r.detail)) }, modifier = Modifier.size(26.dp)) {
-                        Icon(Icons.Default.ContentCopy, tr("approval.copy"), Modifier.size(14.dp))
+                        Icon(Lucide.Copy, tr("approval.copy"), Modifier.size(14.dp))
                     }
                 }
                 MonoBlock(r.detail)
@@ -189,7 +188,7 @@ internal fun ApprovalDialog(state: AppState, p: PendingApproval) {
                         Column(Modifier.padding(horizontal = 10.dp, vertical = 6.dp)) {
                             r.riskNotes.forEach { note ->
                                 Row(verticalAlignment = Alignment.Top) {
-                                    Icon(Icons.Default.Warning, null, Modifier.size(14.dp).padding(top = 2.dp), tint = MaterialTheme.colorScheme.onErrorContainer)
+                                    Icon(Lucide.TriangleAlert, null, Modifier.size(14.dp).padding(top = 2.dp), tint = MaterialTheme.colorScheme.onErrorContainer)
                                     Spacer(Modifier.width(6.dp))
                                     Text(note, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onErrorContainer)
                                 }

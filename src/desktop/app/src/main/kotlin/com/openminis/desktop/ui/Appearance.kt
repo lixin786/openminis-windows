@@ -54,14 +54,18 @@ object Appearance {
      * (kept even if no longer installed so the user sees what is set), then every other installed family A→Z.
      * Families starting with '@' (vertical CJK variants) are hidden.
      */
+    /** Settings value meaning "the platform default font" ('@' names are never real choices: they are hidden). */
+    const val SYSTEM_FONT = "@system"
+
     fun fontChoices(installed: Collection<String>, recommended: List<String>, current: String): List<String> {
         val inst = installed.filter { it.isNotBlank() && !it.startsWith("@") }
         val byLower = inst.associateBy { it.lowercase() }
         val rec = recommended.mapNotNull { byLower[it.lowercase()] }
         val out = LinkedHashSet<String>()
         out += ""
+        out += SYSTEM_FONT
         out += rec
-        if (current.isNotBlank()) out += (byLower[current.lowercase()] ?: current)
+        if (current.isNotBlank() && current != SYSTEM_FONT) out += (byLower[current.lowercase()] ?: current)
         out += inst.filter { it !in out }.sortedBy { it.lowercase() }
         return out.toList()
     }

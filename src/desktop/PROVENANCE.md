@@ -41,12 +41,19 @@ Distributed binaries (jar / MSI / EXE) also contain these libraries, each under 
 | Component | License |
 |---|---|
 | Kotlin stdlib, kotlinx-coroutines, kotlinx-serialization | Apache-2.0 |
-| Compose Multiplatform for Desktop, Material 3, Material icons | Apache-2.0 |
+| Compose Multiplatform for Desktop, Material 3 | Apache-2.0 |
 | OkHttp 4 / okhttp-sse (+ Okio) | Apache-2.0 |
 | org.json | Public domain ("JSON License" removed since 20231013) |
 | com.mikepenz multiplatform-markdown-renderer | Apache-2.0 |
 | com.huaban jieba-analysis 1.0.2 (+ commons-lang3) | Apache-2.0 |
+| Lucide icons (lucide-static 1.55.0; 57 icons generated into `ui/icons/LucideIcons.kt` by `tools/gen-lucide-icons.py`) | ISC — `third_party/lucide/LICENSE` |
+| Inter 4.1 (fonts/Inter-*.ttf) | SIL OFL-1.1 — `third_party/inter/OFL.txt` |
+| JetBrains Mono 2.304 (fonts/JetBrainsMono-*.ttf) | SIL OFL-1.1 — `third_party/jetbrains-mono/OFL.txt` |
 | JetBrains Runtime / Temurin JDK (when bundled by `packageMsi` / `packageExe`) | GPL-2.0 with Classpath Exception |
+
+UI-REFRESH license red lines: no code was copied from Cherry Studio (AGPL-3.0), LobeChat or Open WebUI (custom
+licenses); their designs were used as interaction references only. The OFL fonts are bundled unmodified and are not
+sold separately.
 
 ## Obligations when you distribute / 分发时的义务（GPLv3）
 
