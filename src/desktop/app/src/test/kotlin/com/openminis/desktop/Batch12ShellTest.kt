@@ -92,4 +92,20 @@ class Batch12ShellTest {
         assertTrue(offenders.isEmpty(), offenders.toString())
         assertNotNull(com.openminis.desktop.ui.icons.Lucide.Trash)
     }
+
+    // batch12.1: a settings detail page must not repeat its own headline as a section title (any locale).
+    @Test fun noSectionRepeatsPageTitle() {
+        val src = generateSequence(java.io.File("").absoluteFile) { it.parentFile }
+            .map { java.io.File(it, "src/main/kotlin/com/openminis/desktop/ui") }.first { it.isDirectory }
+        val keys = src.walkTopDown().filter { it.extension == "kt" }
+            .flatMap { Regex("""Section\(tr\("([^"]+)"\)\)""").findAll(it.readText()).map { m -> m.groupValues[1] } }.toSet()
+        val res = generateSequence(java.io.File("").absoluteFile) { it.parentFile }
+            .map { java.io.File(it, "src/main/resources/i18n") }.first { it.isDirectory }
+        listOf("en", "zh-CN", "zh-TW").forEach { loc ->
+            val props = java.util.Properties().apply { java.io.File(res, "$loc.properties").reader(Charsets.UTF_8).use { load(it) } }
+            val titles = SettingsPage.entries.mapNotNull { props.getProperty(it.key) }.toSet()
+            val dupes = keys.filter { props.getProperty(it) in titles }
+            assertTrue(dupes.isEmpty(), "$loc: $dupes")
+        }
+    }
 }

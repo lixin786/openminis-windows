@@ -253,7 +253,6 @@ fun SettingsDialog(state: AppState, onClose: () -> Unit) {
                         NetworkSection(draft.network) { draft = draft.copy(network = it) }
                                 }
                                 SettingsPage.TOOLS -> {
-                        Section(tr("settings.tools"))
                         Toggle(tr("settings.tools_enable"), draft.toolsEnabled) { draft = draft.copy(toolsEnabled = it) }
                         Field(tr("settings.shell")) {
                             Dropdown(
@@ -280,14 +279,12 @@ fun SettingsDialog(state: AppState, onClose: () -> Unit) {
                                 }
                                 SettingsPage.MCP -> McpSection(state, mcpDraft) { mcpDraft = it }
                                 SettingsPage.SKILLS -> {
-                        Section(tr("settings.skills"))
                         Toggle(tr("settings.skills_enable"), draft.skillsEnabled) { draft = draft.copy(skillsEnabled = it) }
                         SkillsSection(state, draft.disabledSkills) { draft = draft.copy(disabledSkills = it) }
 
                                 }
                                 SettingsPage.SUBAGENTS -> SubAgentSection(subDraft, draft, state.toolNames()) { subDraft = it }
                                 SettingsPage.MEMORY -> {
-                        Section(tr("settings.memory"))
                         Toggle(tr("settings.memory_enable"), draft.memoryEnabled) { draft = draft.copy(memoryEnabled = it) }
                         Row {
                             OutlinedButton(onClick = { state.openFile(state.memory.globalFile, "# GLOBAL memory\n\nFacts and preferences the agent should always know.\n") }) { Text(tr("settings.edit_global")) }
@@ -372,7 +369,7 @@ fun SettingsDialog(state: AppState, onClose: () -> Unit) {
     }
     val uiLabel: (String) -> String = { when (it) { "" -> tr("appearance.font_bundled_ui"); Appearance.SYSTEM_FONT -> tr("appearance.font_system"); else -> it } }
     val monoLabel: (String) -> String = { when (it) { "" -> tr("appearance.font_bundled_mono"); Appearance.SYSTEM_FONT -> tr("appearance.font_system"); else -> it } }
-    Section(tr("appearance.title"))
+    Section(tr("appearance.section.theme"))
     Field(tr("appearance.theme")) {
         Dropdown(Appearance.ThemeMode.of(d.darkTheme), Appearance.ThemeMode.entries, { tr("appearance.theme.${it.name.lowercase()}") },
             { onChange(d.copy(darkTheme = it.dark)) })
