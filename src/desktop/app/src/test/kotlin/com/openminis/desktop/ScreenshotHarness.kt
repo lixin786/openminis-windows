@@ -13,6 +13,7 @@ import kotlinx.coroutines.SupervisorJob
 import org.jetbrains.skia.EncodedImageFormat
 import java.io.File
 import kotlin.test.Test
+import androidx.compose.foundation.layout.fillMaxSize
 
 class ScreenshotHarness {
     @Test fun render() {
@@ -47,8 +48,25 @@ class ScreenshotHarness {
             com.openminis.desktop.i18n.I18n.apply(lang)
             val state = AppState(paths, CoroutineScope(SupervisorJob() + Dispatchers.Default))
             val tag = (if (dark) "dark" else "light")
+            // [immersive] The windows as they look undecorated: self-drawn title bar, caption buttons, 1 px frame.
+            val chrome = com.openminis.desktop.ui.WindowChrome(PlacementMachine(WindowPlacements.MIN_W, WindowPlacements.MIN_H), canMaximize = true) {}
+            chrome.attachForPreview(object : PlacementMachine.Ops {
+                var b = WinRect(0, 0, 1280, 800)
+                override fun bounds() = b
+                override fun setBounds(r: WinRect) { b = r }
+                override fun workAreas() = listOf(WinRect(0, 0, 1280, 800))
+            })
+            // -Dopenminis.shotsize=910x472 renders the 1366×768 @150 % work area.
+            val (shotW, shotH) = (System.getProperty("openminis.shotsize") ?: "1280x800").split('x').map { it.trim().toInt() }
             fun shot(name: String) {
-                val scene = ImageComposeScene(1280, 800, Density(1f)) { App(state) }
+                val scene = ImageComposeScene(shotW, shotH, Density(1f)) {
+                    com.openminis.desktop.ui.MinisTheme(state.settings) {
+                        androidx.compose.runtime.CompositionLocalProvider(
+                            com.openminis.desktop.ui.LocalAppMenus provides com.openminis.desktop.ui.appMenus(state, {}, {})) {
+                            com.openminis.desktop.ui.ImmersiveFrame(chrome) { App(state) }
+                        }
+                    }
+                }
                 repeat(3) { scene.render(it * 16_000_000L) }
                 val img = scene.render(100_000_000L)
                 File(out, "$name-$tag.png").writeBytes(img.encodeToData(EncodedImageFormat.PNG)!!.bytes)
@@ -56,6 +74,27 @@ class ScreenshotHarness {
             }
             shot("empty")
             state.select("c1"); shot("chat")
+            // Settings window title row (the dialog body itself needs a real DialogWindow).
+            run {
+                val dc = com.openminis.desktop.ui.WindowChrome(PlacementMachine(420, 300), canMaximize = false) {}
+                dc.attachForPreview(object : PlacementMachine.Ops {
+                    override fun bounds() = WinRect(0, 0, 960, 120)
+                    override fun setBounds(r: WinRect) {}
+                    override fun workAreas() = listOf(WinRect(0, 0, 960, 120))
+                })
+                val scene = ImageComposeScene(960, 120, Density(1f)) {
+                    com.openminis.desktop.ui.MinisTheme(state.settings) {
+                        com.openminis.desktop.ui.ImmersiveFrame(dc) {
+                            androidx.compose.material3.Surface(androidx.compose.ui.Modifier.fillMaxSize()) {
+                                androidx.compose.foundation.layout.Column { com.openminis.desktop.ui.DialogTitleBar(com.openminis.desktop.i18n.tr("settings.title")) }
+                            }
+                        }
+                    }
+                }
+                repeat(3) { scene.render(it * 16_000_000L) }
+                File(out, "dialog-titlebar-$tag.png").writeBytes(scene.render(100_000_000L).encodeToData(EncodedImageFormat.PNG)!!.bytes)
+                scene.close()
+            }
             runCatching { state.shutdown() }
         }
     }

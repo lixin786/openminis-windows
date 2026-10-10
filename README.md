@@ -229,6 +229,18 @@ symlink 不得逃逸（`~/link -> /tmp` 这类）；目标不存在时解析最�
 - 字体：内置 **Inter**（Regular/Medium/SemiBold/Bold）和 **JetBrains Mono**（Regular/Medium/Bold），共约 2.4 MB，均为 SIL OFL-1.1（`third_party/inter`、`third_party/jetbrains-mono`）。界面默认 Inter，中文字形由 Skia 按字回退到系统中文字体（简中 Windows 为微软雅黑）；代码默认 JetBrains Mono。**Noto Sans SC / Sarasa 没有内置**（单字重 8–17 MB）：已安装的话可在 设置 › 外观 里选，选项新增「系统默认」。
 - 新增文案三语齐全；测试 `Batch12ShellTest`。
 
+### 沉浸式窗口第一批（规格见 IMMERSIVE-WINDOW.md，交付说明见 docs/immersive/BATCH1-DELIVERY.md）
+
+主窗口、设置窗口和计划任务窗口都改为 undecorated，标题栏由应用自己绘制：拖动空白处移动窗口，双击最大化或还原；右侧依次是最小化、最大化/还原、关闭；右键或 Alt+Space 打开窗口菜单；支持 8 向边缘缩放。浮动几何与最大化状态分开保存在 window.json。设置 › 外观 › 窗口里有「沉浸式窗口」开关，默认开启。
+
+**已知限制（沉浸式模式；关闭开关即可恢复系统行为）：**
+- 没有 Win+方向键、Aero Snap、拖到屏幕边缘吸附、Win11 分屏布局（Snap layouts）。
+- 系统菜单由应用自绘的窗口菜单代替（右键标题栏或 Alt+Space），不是 Windows 原生菜单。
+- 窗口已激活时点任务栏图标可能无法最小化：AWT 的 undecorated 窗口没有 WS_MINIMIZEBOX 样式。从最小化状态还原不受影响。
+- 第一版没有 Win11 圆角和投影，改用 1px 描边（第二批可选用 DWM 补回）。
+- 跨缩放比不同的显示器拖动时，位置可能会跳一下；单显示器保证正确。
+- 任务栏设为自动隐藏时，最大化窗口会占满整个屏幕（工作区即全屏）。
+
 ## 构建
 
 ```bash

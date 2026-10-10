@@ -21,7 +21,7 @@ ICONS = {
     "Bot": "bot", "Server": "server", "TriangleAlert": "triangle-alert", "Eye": "eye", "EyeOff": "eye-off", "Play": "play",
     "File": "file", "Image": "image", "FolderOpen": "folder-open", "ListChecks": "list-checks",
     "ArrowDownToLine": "arrow-down-to-line", "MessageSquarePlus": "message-square-plus", "Layers": "layers",
-    "Smartphone": "smartphone", "KeyRound": "key-round",
+    "Smartphone": "smartphone", "KeyRound": "key-round", "Minus": "minus", "Menu": "menu",
 }
 
 def f(v): return float(v)

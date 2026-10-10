@@ -93,12 +93,17 @@ fun SettingsDialog(state: AppState, onClose: () -> Unit) {
     var page by remember { mutableStateOf(state.settingsPage) }
     LaunchedEffect(page) { state.settingsPage = page }
     val save = { state.updateSettings(draft); state.updateSubAgentConfig(subDraft); if (mcpDraft != state.mcp.servers) state.updateMcpServers(mcpDraft); onClose() }
+    // [immersive] undecorated + self-drawn title row; switching the mode recreates the window (AWT cannot change it live).
+    val immersive = state.settings.immersiveWindow
+    val chrome = rememberDialogChrome(immersive, onClose)
+    key(immersive) {
     DialogWindow(
-        onCloseRequest = onClose, title = tr("settings.title"),
+        onCloseRequest = onClose, title = tr("settings.title"), undecorated = immersive,
         state = rememberFittedDialogState(960.dp, 760.dp), resizable = true,
         // Esc closes without saving; Ctrl+S / Ctrl+Enter saves.
         onPreviewKeyEvent = { ev ->
-            if (ev.type != androidx.compose.ui.input.key.KeyEventType.KeyDown) false
+            if (chromeKey(chrome, ev, TITLE_REGION_DIALOG)) true
+            else if (ev.type != androidx.compose.ui.input.key.KeyEventType.KeyDown) false
             else when {
                 ev.key == androidx.compose.ui.input.key.Key.Escape -> { onClose(); true }
                 ev.isCtrlPressed && (ev.key == androidx.compose.ui.input.key.Key.S || ev.key == androidx.compose.ui.input.key.Key.Enter) -> { save(); true }
@@ -106,9 +111,11 @@ fun SettingsDialog(state: AppState, onClose: () -> Unit) {
             }
         },
     ) {
-        MinisTheme(state.settings) {
+        AttachChrome(chrome, window)
+        MinisTheme(state.settings) { ImmersiveFrame(chrome) {
             Surface(Modifier.fillMaxSize()) {
                 Column(Modifier.fillMaxSize()) {
+                    DialogTitleBar(tr("settings.title"))
                     Row(Modifier.weight(1f).fillMaxWidth()) {
                         // Rail: groups.
                         Column(Modifier.width(64.dp).fillMaxHeight().background(MaterialTheme.colorScheme.surfaceVariant).padding(vertical = 12.dp),
@@ -339,7 +346,8 @@ fun SettingsDialog(state: AppState, onClose: () -> Unit) {
                     }
                 }
             }
-        }
+        } }
+    }
     }
 }
 
@@ -372,6 +380,9 @@ fun SettingsDialog(state: AppState, onClose: () -> Unit) {
     }
     val uiLabel: (String) -> String = { when (it) { "" -> tr("appearance.font_bundled_ui"); Appearance.SYSTEM_FONT -> tr("appearance.font_system"); else -> it } }
     val monoLabel: (String) -> String = { when (it) { "" -> tr("appearance.font_bundled_mono"); Appearance.SYSTEM_FONT -> tr("appearance.font_system"); else -> it } }
+    Section(tr("appearance.section.window"))
+    Toggle(tr("appearance.immersive"), d.immersiveWindow) { onChange(d.copy(immersiveWindow = it)) }
+    Hint(tr("appearance.immersive_hint"))
     Section(tr("appearance.section.theme"))
     Field(tr("appearance.theme")) {
         Dropdown(Appearance.ThemeMode.of(d.darkTheme), Appearance.ThemeMode.entries, { tr("appearance.theme.${it.name.lowercase()}") },

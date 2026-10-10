@@ -52,6 +52,7 @@ tasks.test {
     systemProperty("java.awt.headless", "true")
     // Off-screen PNGs of the main window for visual review: ./gradlew :desktop:test -Dopenminis.screenshots=/tmp/shots --tests '*ScreenshotHarness*'
     System.getProperty("openminis.screenshots")?.let { systemProperty("openminis.screenshots", it) }
+    System.getProperty("openminis.shotsize")?.let { systemProperty("openminis.shotsize", it) }
     maxHeapSize = "1g"
     // Hotfix 1: run the whole suite with the default charset a zh-CN Windows JDK 17 has (GBK), so
     // any code that still relies on the platform charset fails here instead of on users' machines.

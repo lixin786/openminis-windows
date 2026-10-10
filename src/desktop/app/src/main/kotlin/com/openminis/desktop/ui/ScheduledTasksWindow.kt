@@ -61,13 +61,21 @@ private val DAYS = listOf(Calendar.MONDAY to "MONDAY", Calendar.TUESDAY to "TUES
 @Composable
 fun ScheduledTasksWindow(state: AppState, onClose: () -> Unit) {
     var editing by remember { mutableStateOf<ScheduledTask?>(null) }
-    DialogWindow(onCloseRequest = onClose, title = tr("sched.window"), state = rememberFittedDialogState(820.dp, 680.dp), resizable = true,
-        onPreviewKeyEvent = { ev -> if (ev.type == KeyEventType.KeyDown && ev.key == Key.Escape) { if (editing != null) editing = null else onClose(); true } else false }) {
-        MinisTheme(state.settings) {
-            Surface(Modifier.fillMaxSize()) {
+    // [immersive] see SettingsDialog.
+    val immersive = state.settings.immersiveWindow
+    val chrome = rememberDialogChrome(immersive, onClose)
+    key(immersive) {
+    DialogWindow(onCloseRequest = onClose, title = tr("sched.window"), state = rememberFittedDialogState(820.dp, 680.dp), resizable = true, undecorated = immersive,
+        onPreviewKeyEvent = { ev ->
+            if (chromeKey(chrome, ev, TITLE_REGION_DIALOG)) true
+            else if (ev.type == KeyEventType.KeyDown && ev.key == Key.Escape) { if (editing != null) editing = null else onClose(); true } else false }) {
+        AttachChrome(chrome, window)
+        MinisTheme(state.settings) { ImmersiveFrame(chrome) {
+            Surface(Modifier.fillMaxSize()) { Column(Modifier.fillMaxSize()) {
+                DialogTitleBar(tr("sched.window"))
                 @Suppress("UNUSED_VARIABLE") val tick = state.scheduledTick
                 val tasks = state.scheduler.list()
-                ScrollColumn(Modifier.fillMaxSize()) {
+                ScrollColumn(Modifier.weight(1f).fillMaxWidth()) {
                     RunsOnlyWhileOpenNote()
                     Spacer(Modifier.height(8.dp))
                     val e = editing
@@ -86,8 +94,9 @@ fun ScheduledTasksWindow(state: AppState, onClose: () -> Unit) {
                         }
                     }
                 }
-            }
-        }
+            } }
+        } }
+    }
     }
 }
 

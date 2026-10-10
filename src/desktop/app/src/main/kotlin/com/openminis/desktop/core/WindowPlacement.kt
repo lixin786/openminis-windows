@@ -48,6 +48,13 @@ object WindowPlacements {
             val r = Rectangle(saved.x, saved.y, saved.width, saved.height)
             val host = screens.maxByOrNull { s -> r.intersection(s).let { if (it.isEmpty) 0 else it.width * it.height } }
             val area = host?.let { r.intersection(it) }?.takeIf { !it.isEmpty }?.let { it.width.toLong() * it.height } ?: 0
+            // Files written before the immersive-window batch stored the *maximized* size as the floating one.
+            // A maximized entry that fills ~the whole monitor gets the default floating size (still maximized).
+            if (host != null && saved.maximized && saved.width >= host.width * 0.95 && saved.height >= host.height * 0.95) {
+                val w = minOf(DEFAULT_W, (host.width * 0.92).toInt()).coerceAtLeast(minOf(MIN_W, host.width))
+                val h = minOf(DEFAULT_H, (host.height * 0.92).toInt()).coerceAtLeast(minOf(MIN_H, host.height))
+                return WindowPlacement(host.x + (host.width - w) / 2, host.y + (host.height - h) / 2, w, h, maximized = true)
+            }
             if (host != null && area >= 0.6 * saved.width.toLong() * saved.height) {
                 val w = saved.width.coerceIn(minOf(MIN_W, host.width), host.width)
                 val h = saved.height.coerceIn(minOf(MIN_H, host.height), host.height)

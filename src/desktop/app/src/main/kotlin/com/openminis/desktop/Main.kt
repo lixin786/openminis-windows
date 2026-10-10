@@ -24,6 +24,24 @@ import com.openminis.app.logging.AppLogger
 import com.openminis.desktop.core.AppPaths
 import com.openminis.desktop.ui.App
 import com.openminis.desktop.ui.AppState
+import com.openminis.desktop.ui.AwtWindowOps
+import com.openminis.desktop.ui.ImmersiveFrame
+import com.openminis.desktop.ui.LocalAppMenus
+import com.openminis.desktop.ui.MenuEntry
+import com.openminis.desktop.ui.MinisTheme
+import com.openminis.desktop.ui.WindowChrome
+import com.openminis.desktop.ui.appMenus
+import com.openminis.desktop.ui.chromeKey
+import com.openminis.desktop.core.PlacementMachine
+import com.openminis.desktop.core.WinRect
+import com.openminis.desktop.core.WindowPlacement
+import com.openminis.desktop.core.WindowPlacements
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.key
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.ui.input.key.isShiftPressed
+import kotlinx.coroutines.flow.collectLatest
 
 fun main(args: Array<String>) {
     // Must be set before the JDK's default ProxySelector is first touched: lets Settings → Network
@@ -41,88 +59,113 @@ fun main(args: Array<String>) {
         val scope = rememberCoroutineScope()
         val state = remember { AppState(paths, scope).also { com.openminis.desktop.i18n.I18n.apply(it.settings.language) } }
         val placementFile = remember { java.io.File(paths.root, "window.json") }
-        val placement = remember {
-            com.openminis.desktop.core.WindowPlacements.resolve(
-                com.openminis.desktop.core.WindowPlacements.load(placementFile), com.openminis.desktop.core.WindowPlacements.screens(),
-            ).also { AppLogger.info("Main", "window placement $it (screens=${com.openminis.desktop.core.WindowPlacements.screens()})") }
+        val initial = remember {
+            WindowPlacements.resolve(WindowPlacements.load(placementFile), WindowPlacements.screens())
+                .also { AppLogger.info("Main", "window placement $it (screens=${WindowPlacements.screens()})") }
         }
-        val windowState = rememberWindowState(
-            width = placement.width.dp, height = placement.height.dp,
-            position = if (placement.x == -1 && placement.y == -1) WindowPosition.PlatformDefault else WindowPosition(placement.x.dp, placement.y.dp),
-            placement = if (placement.maximized) androidx.compose.ui.window.WindowPlacement.Maximized else androidx.compose.ui.window.WindowPlacement.Floating,
-        )
-        fun savePlacement() {
-            val pos = windowState.position
-            val size = windowState.size
-            if (pos is WindowPosition.Absolute) com.openminis.desktop.core.WindowPlacements.save(placementFile, com.openminis.desktop.core.WindowPlacement(
-                pos.x.value.toInt(), pos.y.value.toInt(), size.width.value.toInt(), size.height.value.toInt(),
-                windowState.placement == androidx.compose.ui.window.WindowPlacement.Maximized,
-            ))
+        // [immersive] Floating geometry and the maximized flag live here, across window re-creations (mode switch).
+        val machine = remember {
+            PlacementMachine(WindowPlacements.MIN_W, WindowPlacements.MIN_H).also { m ->
+                m.restoreFrom(if (initial.x == -1 && initial.y == -1) null else WinRect(initial.x, initial.y, initial.width, initial.height), initial.maximized)
+            }
         }
-        Window(
-            onCloseRequest = { savePlacement(); state.shutdown(); exitApplication() },
-            title = "OpenMinis",
-            state = windowState,
-            icon = painterResource("icon.png"),
-            onPreviewKeyEvent = { ev ->
-                if (ev.type == KeyEventType.KeyDown && ev.isCtrlPressed) when (ev.key) {
-                    Key.N -> { state.newChat(); true }
-                    Key.Equals, Key.Plus, Key.NumPadAdd -> { state.zoomText(+1); true }
-                    Key.Minus, Key.NumPadSubtract -> { state.zoomText(-1); true }
-                    Key.Zero, Key.NumPad0 -> { state.zoomText(0); true }
-                    Key.Comma -> { state.showSettings = true; true }
-                    else -> false
-                } else false
-            },
-        ) {
-            window.minimumSize = java.awt.Dimension(
-                minOf(com.openminis.desktop.core.WindowPlacements.MIN_W, placement.width),
-                minOf(com.openminis.desktop.core.WindowPlacements.MIN_H, placement.height),
+        val closing = remember { java.util.concurrent.atomic.AtomicBoolean(false) }
+        fun savePlacement() { machine.snapshot()?.let { WindowPlacements.save(placementFile, it) } }
+        // Idempotent: Alt+F4 may arrive both from the OS and from our own key handler.
+        fun quit() { if (closing.getAndSet(true)) return; savePlacement(); state.shutdown(); exitApplication() }
+
+        val immersive = state.settings.immersiveWindow
+        // AWT cannot toggle decorations on a live window: the mode switch recreates it at the same geometry.
+        key(immersive) {
+            val start = remember { machine.floating?.let { WindowPlacement(it.x, it.y, it.width, it.height, machine.maximized) } ?: initial }
+            val windowState = rememberWindowState(
+                width = start.width.dp, height = start.height.dp,
+                position = if (start.x == -1 && start.y == -1) WindowPosition.PlatformDefault else WindowPosition(start.x.dp, start.y.dp),
+                // Immersive "maximize" is our own (work area only), so the window itself always starts floating.
+                placement = if (!immersive && start.maximized) androidx.compose.ui.window.WindowPlacement.Maximized else androidx.compose.ui.window.WindowPlacement.Floating,
             )
-            // [security] Approvals are only asked while this window exists; otherwise they are denied.
-            androidx.compose.runtime.DisposableEffect(Unit) {
-                state.windowAvailable = true
-                onDispose { state.windowAvailable = false }
-            }
-            // An approval request must not wait unseen behind other windows.
-            androidx.compose.runtime.LaunchedEffect(state.pendingApproval) {
-                if (state.pendingApproval != null) {
-                    if (window.extendedState and java.awt.Frame.ICONIFIED != 0) window.extendedState = window.extendedState and java.awt.Frame.ICONIFIED.inv()
-                    window.toFront(); window.requestFocus()
+            val chrome = remember { if (immersive) WindowChrome(machine, canMaximize = true) { quit() } else null }
+            Window(
+                onCloseRequest = { quit() },
+                title = "OpenMinis",
+                state = windowState,
+                undecorated = immersive,
+                icon = painterResource("icon.png"),
+                onPreviewKeyEvent = { ev ->
+                    if (chromeKey(chrome, ev)) true
+                    else if (ev.type == KeyEventType.KeyDown && ev.isCtrlPressed) when (ev.key) {
+                        Key.N -> { state.newChat(); true }
+                        Key.Equals, Key.Plus, Key.NumPadAdd -> { state.zoomText(+1); true }
+                        Key.Minus, Key.NumPadSubtract -> { state.zoomText(-1); true }
+                        Key.Zero, Key.NumPad0 -> { state.zoomText(0); true }
+                        Key.Comma -> { state.showSettings = true; true }
+                        // Without the Swing MenuBar (immersive) its accelerators are bound here instead.
+                        Key.K -> if (immersive && ev.isShiftPressed) { if (!state.isRunning) state.compactNow(); true } else false
+                        Key.F -> if (immersive) { state.searchFocusTick++; true } else false
+                        else -> false
+                    } else if (immersive && ev.type == KeyEventType.KeyDown && ev.key == Key.F2 && state.selectedId != null) {
+                        state.renamingId = state.selectedId; true
+                    } else false
+                },
+            ) {
+                window.minimumSize = java.awt.Dimension(
+                    minOf(WindowPlacements.MIN_W, start.width),
+                    minOf(WindowPlacements.MIN_H, start.height),
+                )
+                if (chrome != null) LaunchedEffect(Unit) {
+                    chrome.attach(window)
+                    if (start.maximized) chrome.maximize()
+                } else LaunchedEffect(Unit) {
+                    // System title bar: the OS maximizes; remember the floating bounds once a move/resize settles.
+                    machine.ops = AwtWindowOps(window)
+                    snapshotFlow { Triple(windowState.placement, windowState.position, windowState.size) }.collectLatest { (pl, pos, size) ->
+                        machine.osPlacementChanged(pl == androidx.compose.ui.window.WindowPlacement.Maximized)
+                        if (pl == androidx.compose.ui.window.WindowPlacement.Floating && !windowState.isMinimized && pos is WindowPosition.Absolute) {
+                            kotlinx.coroutines.delay(300)
+                            if (windowState.placement == androidx.compose.ui.window.WindowPlacement.Floating && !windowState.isMinimized)
+                                machine.observedFloating(WinRect(pos.x.value.toInt(), pos.y.value.toInt(), size.width.value.toInt(), size.height.value.toInt()))
+                        }
+                    }
+                }
+                // [security] Approvals are only asked while this window exists; otherwise they are denied.
+                androidx.compose.runtime.DisposableEffect(Unit) {
+                    state.windowAvailable = true
+                    onDispose { state.windowAvailable = false }
+                }
+                // An approval request must not wait unseen behind other windows.
+                androidx.compose.runtime.LaunchedEffect(state.pendingApproval) {
+                    if (state.pendingApproval != null) {
+                        if (window.extendedState and java.awt.Frame.ICONIFIED != 0) window.extendedState = window.extendedState and java.awt.Frame.ICONIFIED.inv()
+                        window.toFront(); window.requestFocus()
+                    }
+                }
+                val attach = {
+                    val chooser = javax.swing.JFileChooser().apply { isMultiSelectionEnabled = true; dialogTitle = tr("attach.dialog_title") }
+                    if (chooser.showOpenDialog(window) == javax.swing.JFileChooser.APPROVE_OPTION) state.attachFiles(chooser.selectedFiles.toList())
+                }
+                val menus = appMenus(state, attach) { quit() }
+                // Immersive: no Swing MenuBar (it would add a second row above our title bar); the menu is a title-bar button.
+                if (!immersive) MenuBar {
+                    menus.forEach { g ->
+                        Menu(g.title, mnemonic = g.mnemonic) {
+                            g.entries.forEach { e ->
+                                when (e) {
+                                    MenuEntry.Separator -> Separator()
+                                    is MenuEntry.Action -> Item(
+                                        if (e.key == null && e.shortcutText != null) e.label + "\t" + e.shortcutText else e.label,
+                                        shortcut = e.key, enabled = e.enabled, onClick = e.onClick,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+                MinisTheme(state.settings) {
+                    CompositionLocalProvider(LocalAppMenus provides (if (immersive) menus else null)) {
+                        ImmersiveFrame(chrome) { App(state) }
+                    }
                 }
             }
-            MenuBar {
-                Menu(tr("menu.file"), mnemonic = 'F') {
-                    Item(tr("menu.new_chat"), shortcut = KeyShortcut(Key.N, ctrl = true), onClick = { state.newChat() })
-                    Item(tr("menu.settings"), shortcut = KeyShortcut(Key.Comma, ctrl = true), onClick = { state.showSettings = true })
-                    Item(tr("menu.scheduled"), onClick = { state.showScheduled = true })
-                    Separator()
-                    Item(tr("menu.open_workspace"), onClick = { state.openInExplorer(state.settings.workspace()) })
-                    Item(tr("menu.open_data"), onClick = { state.openInExplorer(paths.root) })
-                    Separator()
-                    Item(tr("menu.exit"), onClick = { savePlacement(); state.shutdown(); exitApplication() })
-                }
-                Menu(tr("menu.view"), mnemonic = 'V') {
-                    Item(tr("menu.zoom_in") + "\tCtrl+=", onClick = { state.zoomText(+1) })
-                    Item(tr("menu.zoom_out") + "\tCtrl+-", onClick = { state.zoomText(-1) })
-                    Item(tr("menu.zoom_reset") + "\tCtrl+0", onClick = { state.zoomText(0) })
-                }
-                Menu(tr("menu.chat"), mnemonic = 'C') {
-                    Item(tr("menu.stop"), enabled = state.isRunning, onClick = { state.stop() })
-                    Item(tr("menu.regenerate"), enabled = !state.isRunning, onClick = { state.regenerate() })
-                    Item(tr("menu.compact"), shortcut = KeyShortcut(Key.K, ctrl = true, shift = true), enabled = !state.isRunning, onClick = { state.compactNow() })
-                    Item(tr("menu.attach"), onClick = {
-                        val chooser = javax.swing.JFileChooser().apply { isMultiSelectionEnabled = true; dialogTitle = tr("attach.dialog_title") }
-                        if (chooser.showOpenDialog(window) == javax.swing.JFileChooser.APPROVE_OPTION) state.attachFiles(chooser.selectedFiles.toList())
-                    })
-                    Item(tr("menu.rename_chat"), shortcut = KeyShortcut(Key.F2), enabled = state.selectedId != null, onClick = { state.renamingId = state.selectedId })
-                    Item(tr(if (state.selected?.pinned == true) "menu.unpin_chat" else "menu.pin_chat"), enabled = state.selectedId != null,
-                        onClick = { state.selectedId?.let(state::togglePin) })
-                    Item(tr("menu.search_chats"), shortcut = KeyShortcut(Key.F, ctrl = true), onClick = { state.searchFocusTick++ })
-                    Item(tr("menu.delete_chat"), onClick = { state.selectedId?.let(state::delete) })
-                }
-            }
-            App(state)
         }
     }
 }

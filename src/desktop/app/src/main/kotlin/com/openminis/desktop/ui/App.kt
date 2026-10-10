@@ -185,7 +185,11 @@ private fun Sidebar(state: AppState, modifier: Modifier) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             BrandMark(26.dp)
             Spacer(Modifier.width(8.dp))
-            Text("OpenMinis", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+            val chrome = LocalWindowChrome.current
+            Box(Modifier.weight(1f).height(34.dp).titleBarDrag(chrome, TITLE_REGION_SIDE), contentAlignment = Alignment.CenterStart) {
+                Text("OpenMinis", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                if (chrome != null) TitleBarMenu(chrome, TITLE_REGION_SIDE)
+            }
             IconButton(onClick = { state.showScheduled = true }, modifier = Modifier.size(34.dp)) { Icon(Lucide.CalendarClock, tr("sidebar.scheduled"), Modifier.size(18.dp)) }
             IconButton(onClick = { state.openSettings() }, modifier = Modifier.size(34.dp)) { Icon(Lucide.Settings, tr("sidebar.settings"), Modifier.size(18.dp)) }
         }
@@ -530,20 +534,40 @@ private fun CompactDivider(state: AppState, convId: String, mk: CompactMarker, i
 @Composable
 private fun TopBar(state: AppState, conv: Conversation?) {
     val s = state.settings
-    Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+    // [immersive] This row is the window's title bar: blank space drags, caption buttons sit flush right.
+    val chrome = LocalWindowChrome.current
+    val menus = LocalAppMenus.current
+    BoxWithConstraints(Modifier.fillMaxWidth().height(42.dp)) {
+    val narrow = maxWidth < 820.dp
+    Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
+    Row(Modifier.weight(1f).fillMaxHeight().padding(horizontal = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+        if (menus != null) { AppMenuButton(menus); Spacer(Modifier.width(2.dp)) }
         IconButton(onClick = { state.sidebarCollapsed = !state.sidebarCollapsed }, modifier = Modifier.size(34.dp)) {
             Icon(Lucide.PanelLeft, tr(if (state.sidebarCollapsed) "toolbar.show_sidebar" else "toolbar.hide_sidebar"), Modifier.size(18.dp))
         }
         if (state.sidebarCollapsed) { Spacer(Modifier.width(4.dp)); BrandMark(22.dp) }
         Spacer(Modifier.width(6.dp))
-        ModelPill(state)
-        Spacer(Modifier.width(6.dp))
-        ThinkingChip(state)
-        Spacer(Modifier.width(10.dp))
-        Text(conv?.displayTitle().orEmpty(), style = MaterialTheme.typography.bodyMedium, maxLines = 1, color = MaterialTheme.colorScheme.onSurfaceVariant,
-            overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+        // [immersive] Pill + chip shrink first, so the drag region keeps at least 56 dp and the buttons stay on screen
+        // (1366×768 @150 %). Narrow windows also drop the context reading.
+        LeadThenFill(Modifier.weight(1f).fillMaxHeight(), minFill = if (chrome != null) 56.dp else 0.dp,
+            lead = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    ModelPill(state, compact = narrow)
+                    Spacer(Modifier.width(6.dp))
+                    ThinkingChip(state)
+                    Spacer(Modifier.width(10.dp))
+                }
+            },
+            fill = {
+                Box(Modifier.fillMaxSize().titleBarDrag(chrome, TITLE_REGION_TOP), contentAlignment = Alignment.CenterStart) {
+                    Text(conv?.displayTitle().orEmpty(), style = MaterialTheme.typography.bodyMedium, maxLines = 1,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = if (chrome?.active == false) 0.6f else 1f),
+                        overflow = TextOverflow.Ellipsis)
+                    if (chrome != null) TitleBarMenu(chrome, TITLE_REGION_TOP)
+                }
+            })
         val reading = conv?.id?.let { state.contextReadings[it] }
-        if (reading != null && reading.window > 0) {
+        if (reading != null && reading.window > 0 && !narrow) {
             val pct = (reading.measuredTokens * 100L / reading.window).toInt()
             val near = reading.compactThreshold > 0 && reading.measuredTokens >= reading.compactThreshold * 0.8
             Text(
@@ -565,11 +589,33 @@ private fun TopBar(state: AppState, conv: Conversation?) {
             Icon(Lucide.Download, tr("toolbar.export"), Modifier.size(18.dp))
         }
     }
+        if (chrome != null) CaptionButtons(chrome, Modifier.fillMaxHeight())
+    }
+    }
+}
+
+/**
+ * [immersive] [lead] gets at most (width − [minFill]) and keeps its natural width; [fill] takes all the rest.
+ * Unlike Row weights this never leaves slack, so whatever follows stays flush right.
+ */
+@Composable
+private fun LeadThenFill(modifier: Modifier, minFill: androidx.compose.ui.unit.Dp, lead: @Composable () -> Unit, fill: @Composable () -> Unit) {
+    androidx.compose.ui.layout.Layout(contents = listOf(lead, fill), modifier = modifier) { (leadM, fillM), c ->
+        val minF = minFill.roundToPx().coerceAtMost(c.maxWidth)
+        val leadP = leadM.map { it.measure(androidx.compose.ui.unit.Constraints(maxWidth = (c.maxWidth - minF).coerceAtLeast(0), maxHeight = c.maxHeight)) }
+        val lw = leadP.maxOfOrNull { it.width } ?: 0
+        val fw = (c.maxWidth - lw).coerceAtLeast(0)
+        val fillP = fillM.map { it.measure(androidx.compose.ui.unit.Constraints.fixed(fw, c.maxHeight)) }
+        layout(c.maxWidth, c.maxHeight) {
+            leadP.forEach { it.place(0, (c.maxHeight - it.height) / 2) }
+            fillP.forEach { it.place(lw, 0) }
+        }
+    }
 }
 
 /** "model | provider" pill (UI-REFRESH §3.2); click = provider + model menu. */
 @Composable
-private fun ModelPill(state: AppState) {
+private fun ModelPill(state: AppState, compact: Boolean = false) {
     val s = state.settings
     val kind = s.activeProvider
     val ps = s.provider(kind)
@@ -587,13 +633,16 @@ private fun ModelPill(state: AppState) {
                 Icon(Lucide.Sparkles, null, Modifier.size(14.dp), tint = MaterialTheme.colorScheme.primary)
                 Spacer(Modifier.width(6.dp))
                 Text(current, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.widthIn(max = 260.dp))
+                    modifier = Modifier.widthIn(max = if (compact) 150.dp else 260.dp))
+                // Narrow window: the provider badge goes (it is in the pill's menu and its a11y label).
+                if (!compact) {
                 Spacer(Modifier.width(6.dp))
                 Box(Modifier.width(1.dp).height(14.dp).background(MaterialTheme.colorScheme.outlineVariant))
                 Spacer(Modifier.width(6.dp))
                 Surface(shape = RoundedCornerShape(6.dp), color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)) {
                     Text(ShellModel.providerBadge(kind, ps.effectiveBaseUrl(kind)), style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.primary, maxLines = 1, modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp))
+                }
                 }
                 Icon(Lucide.ChevronDown, null, Modifier.size(16.dp).padding(start = 2.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }

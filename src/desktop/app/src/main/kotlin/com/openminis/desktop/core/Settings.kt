@@ -63,6 +63,8 @@ data class AppSettings(
     val memoryEnabled: Boolean = true,
     val skillsEnabled: Boolean = true,
     val darkTheme: Boolean? = null,
+    /** [immersive] Undecorated windows with a self-drawn title bar (IMMERSIVE-WINDOW.md); off = system title bar. */
+    val immersiveWindow: Boolean = true,
     /** Appearance (ui/Appearance): accent palette id, text size factor, UI / code font family ("" = built-in default). */
     val accent: String = "indigo",
     val fontScale: Float = 1f,
