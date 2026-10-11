@@ -15,6 +15,8 @@ import java.io.File
  */
 class AppPaths(val root: File) {
     val settingsFile: File get() = File(root, "settings.json")
+    /** P3-1: DPAPI-encrypted API keys and proxy password (ciphertext only). */
+    val secretsFile: File get() = File(root, "secrets.json")
     val conversationsDir: File get() = File(root, "conversations").apply { mkdirs() }
     val skillsDir: File get() = File(root, "skills").apply { mkdirs() }
     val memoryDir: File get() = File(root, "memory").apply { mkdirs() }

@@ -55,7 +55,9 @@ data class NetworkSettings(
     val proxyHost: String = "",
     val proxyPort: Int = 0,
     val proxyUser: String = "",
+    /** In memory only on Windows (P3-1): settings.json keeps "" and [proxyPasswordStore] = "dpapi". */
     val proxyPassword: String = "",
+    val proxyPasswordStore: String = "",
     /** Hosts that bypass the manual proxy: `;` or `,` separated, `*.corp.example`, `10.*`, `<local>`. */
     val bypass: String = "localhost;127.*;::1;<local>",
     /** TCP connect + proxy tunnel + TLS handshake must finish within this many seconds. */

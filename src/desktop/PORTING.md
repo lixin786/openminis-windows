@@ -65,7 +65,7 @@ Batch 1 added 6 more upstream test classes, verbatim: `data/ContextOverflowGuard
 
 | Android | Desktop |
 |---|---|
-| `Context.filesDir`, SharedPreferences, DataStore, EncryptedSharedPreferences | JSON files under `%APPDATA%\OpenMinis` (`settings.json`, atomic temp-file + rename writes). **API keys are stored in plain text** in the user profile — Windows DPAPI/Credential Manager integration is a TODO. |
+| `Context.filesDir`, SharedPreferences, DataStore, EncryptedSharedPreferences | JSON files under `%APPDATA%\OpenMinis` (`settings.json`, atomic temp-file + rename writes). API keys and the proxy password are encrypted with **Windows DPAPI** (CurrentUser scope) in `secrets.json`; `settings.json` keeps only a marker (P3-1). |
 | Room chat database (`data/db`, `data/repository`, `data/session`) | one JSON file per conversation (`conversations/<id>.json`, kotlinx-serialization). No migrations, no FTS search (sidebar search is an in-memory substring match). |
 | `ChatViewModel` (17.5k lines: streaming, tools, compaction, fallback, offload, voice…) | `desktop/agent/AgentEngine.kt`: streams via the upstream `LLMProvider`, accumulates text / thinking / reasoning_content / tool calls, executes tools sequentially, feeds results back as `AgentContentPart.ToolUse/ToolResult`, guarded by the upstream `ToolLoopDetector` and a max-rounds limit; cancellable (Stop / Esc). Batch 1: measures every outgoing request with the upstream `ContextSizeMeter` (calibrated per model from reported usage) and follows the upstream `ContextPolicy.inLoopStep` table (compact / send / stop); the ViewModel's compaction functions are ported as pure functions in `desktop/agent/Compaction.kt`, its retry/fallback decision in `desktop/agent/FallbackChain.kt`, its attachment shaping in `desktop/core/Attachments.kt`. |
 | PRoot (Android) / iSH (iOS) Linux sandbox, `sandbox/**`, terminal | `desktop/tools/ShellRunner.kt`: runs on the host via **PowerShell** (`pwsh.exe` if on PATH, else `powershell.exe`, `-EncodedCommand` UTF-16LE to avoid quoting bugs, UTF-8 output), **cmd.exe**, or **WSL** (`wsl.exe --cd <ws> -e bash -lc`). Working directory = `%USERPROFILE%\OpenMinis\workspace` (configurable). Timeout with process-tree kill, 30k-char head+tail output truncation. **Confirm-before-run toggle (default on)** plus the security gates below (denylist hard block, metacharacter guard, read-only allowlist, hard path confinement). There is no isolation — this is the biggest behavioural difference from Android. |
@@ -114,7 +114,8 @@ denylist is a safety net, not a proof — confirmation stays the primary control
 
 ## Roadmap (tracked)
 
-Status: ✅ done · 🟡 partial · ⬜ not started
+Status: ✅ done · 🟡 partial · ⬜ not started — table refreshed 2026-10-11 (ui-batch after 13.3 + P3-1).
+"Verified" = accepted by the user on real Windows 11; "unit tests + code" = not hand-tested on Windows.
 
 ### P0
 | # | Item | Status | Notes |
@@ -127,9 +128,9 @@ Status: ✅ done · 🟡 partial · ⬜ not started
 ### P1
 | # | Item | Status | Notes |
 |---|---|---|---|
-| P1-1 | MCP stdio client (`mcp/`) | ✅ | batch2 — see *P1-1 MCP* below. HTTP transport (phone interop) / OAuth: next. |
+| P1-1 | MCP stdio client (`mcp/`) | ✅ | batch2 — see *P1-1 MCP* below. MCP **client** over HTTP / OAuth: not done (`url` entries are kept, not started). Phone interop went the other way: the desktop is an MCP **server** (batch13, below). |
 | P1-2 | Sub-agents (`agent/jobs`, SubAgentDefinition) | ✅ | batch2 — see *P1-2 Sub agents* below. |
-| P1-3 | Skill import UI (GitHub / zip) + per-conversation skill override | ✅ (import) | batch3 — see *P1-3 Skills* below. Per-conversation override moves to the UI batch (with per-session MCP). |
+| P1-3 | Skill import UI (GitHub / zip) + per-conversation skill override | 🟡 | Import ✅ batch3 — see *P1-3 Skills* below. Per-conversation **skill** override not done (batch9 did per-conversation **MCP** only). |
 | P1-4 | Scheduled tasks | ✅ (in-app timer) | batch3 — see *P1-4 Scheduled tasks* below. The planned `schtasks` headless launch (fire while the app is closed) is not done. |
 
 ### P2
@@ -139,14 +140,30 @@ Status: ✅ done · 🟡 partial · ⬜ not started
 | P2-2 | Image / audio generation UI + vision groups | ⬜ | provider code present; `VisionGroupResolver` is a stub. |
 | P2-3 | OAuth logins (Claude Code, Codex/ChatGPT, Copilot) | ⬜ | Copilot device flow and OpenRouter PKCE look possible with public values; Claude Code / Codex need client ids & customization values that are not in the public mirror — impossible to reproduce faithfully; API keys stay the supported path. |
 | P2-4 | KaTeX math rendering | ⬜ | needs a WebView/JCEF or a native LaTeX renderer. |
-| P2-5 | i18n (upstream 22 locales) | ⬜ | UI strings are English literals today. |
+| P2-5 | i18n | ✅ (3 locales) | batch5 `61a45f0` + batch6 `3ca66f1`, verified: properties tables en / zh-CN / zh-TW, Settings › Language (system / en / zh-CN / zh-TW, live switch, follows Windows by default), `I18nTest` guards same keys, placeholders, no untranslated Chinese, no hard-coded English in the UI. Only the UI is translated; text sent to the model stays English. Upstream's other 19 locales are not ported. |
 | P2-6 | Backup / restore + update check | ⬜ | upstream uses rclone + Android storage. |
 
 ### P3
 | # | Item | Status | Notes |
 |---|---|---|---|
-| P3-1 | API keys via Windows DPAPI / Credential Manager | ⬜ | today: plain JSON in the user profile. |
-| P3-2 | Real MSI/EXE build on Windows + code-signing plan | 🟡 | `packageMsi`/`packageExe` + GitHub Actions workflow exist (unsigned, SmartScreen warns); signing not set up. |
+| P3-1 | API keys via Windows DPAPI | ✅ (unit tests + code) | DPAPI `CryptProtectData`, CurrentUser scope, app entropy, UI forbidden (JNA). Keys and proxy password → `secrets.json` (ciphertext only); `settings.json` keeps `apiKeyStore` / `proxyPasswordStore` = `"dpapi"`. First start moves plain-text keys over and clears them; if encryption fails nothing is rewritten and a toast says so. A blob another Windows user / PC cannot decrypt is listed in Settings › Models and a startup toast, and kept until the key is re-entered or "Forget" is pressed (never silently cleared). Credential Manager not used. Real-DPAPI test runs on Windows only. The phone-link token (`remote-mcp-token`) is still a plain file. |
+| P3-2 | Real MSI/EXE build on Windows + code-signing plan | 🟡 | `packageMsi` / `packageExe` verified on Chinese Windows 11 (batch6: ASCII-only jpackage metadata fixes "Input length = 1" without any UTF-8 environment variable). Unsigned (SmartScreen warns); signing not set up. |
+
+### Desktop batches after P1 (UI, window, phone link)
+| Batch | Item | Status | Notes |
+|---|---|---|---|
+| batch4 | Security hardening | ✅ verified | See *Security hardening* above (532/0/0/0 on Windows). |
+| batch7 | Session management: rename, pin, search | ✅ verified | `b429bf6`. F2 / right-click / Ctrl+F not hand-tested (unit tests + code). |
+| batch8 | Tool cards, edit & resend, jump to latest | ✅ verified | `32981eb`. |
+| batch9 | Per-conversation MCP panel | ✅ verified | `0cbe9db`. |
+| batch10 | Appearance: theme, accent, text size, fonts | ✅ | `0af4461`. |
+| batch11 / 11.1 | UI refresh 1: risk-tiered approvals, 4-state tool cards | ✅ verified | `6fe75c6`, `6ca3241` (UI-REFRESH.md). |
+| batch12 / 12.1 | UI refresh 2: sidebar, model pill, empty state, settings rail, Lucide icons, Inter + JetBrains Mono | ✅ verified | `df4728f`, `b2ea105`. Noto Sans SC not bundled (accepted). |
+| immersive 1 | Frameless windows, self-drawn title bar, 8-way resize, work-area maximize, `window.json` geometry, escape switch | ✅ verified | `582302a` (IMMERSIVE-WINDOW.md, docs/immersive/). Taskbar-button minimize while focused: pending check (README). |
+| immersive 2 | DWM rounded corners + shadow | ⬜ | Needs JNA (now a dependency since P3-1). |
+| 13.1 | Phone link: MCP server skeleton (LAN-only bind, Bearer, sessions, lockout, 2025-06-18 streamable HTTP) | ✅ verified | `8b72ee7` (MCP-SERVER.md, docs/batch13/). |
+| 13.2 | Five read-only phone tools, PathGuard, sensitive-file denylist, audit log | ✅ verified | `c25a117`. |
+| 13.3 | Connections list + disconnect (10-min refusal), audit log view, strings | ✅ verified (650/0/0/0) | `f2a416b`. The two UI sections: unit tests + code. Phone `add --url` field test skipped by the user. |
 
 ### Also not ported (no priority assigned)
 Cloud offload, web apps (`webapp/`), tray icon, terminal UI, models.dev catalog refresh, multi-instance providers / model groups UI.
@@ -221,3 +238,4 @@ Real-Windows finding after hotfix2: two independent ~3 s killers — the local p
 | Library | Version | License | Use |
 |---|---|---|---|
 | com.huaban:jieba-analysis (+ commons-lang3) | 1.0.2 | Apache-2.0 | Chinese segmentation for memory search (replaces upstream's MIT cppjieba JNI). |
+| net.java.dev.jna:jna + jna-platform | 5.15.0 | Apache-2.0 / LGPL-2.1 (dual; used under Apache-2.0) | P3-1: Windows DPAPI (`Crypt32Util`) for API keys. Loaded only on Windows. |

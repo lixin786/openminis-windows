@@ -26,13 +26,16 @@ OpenMinis 是一个开源 AI Agent 应用（[GitHub](https://github.com/OpenMini
 
 | 内容 | 路径 |
 |---|---|
-| 设置（含 API Key，明文） | `%APPDATA%\OpenMinis\settings.json` |
+| 设置（不含密钥，只有标记） | `%APPDATA%\OpenMinis\settings.json` |
+| API 密钥、代理密码（Windows DPAPI 加密，仅当前 Windows 用户可解） | `%APPDATA%\OpenMinis\secrets.json` |
 | 会话 | `%APPDATA%\OpenMinis\conversations\` |
 | 记忆 | `%APPDATA%\OpenMinis\memory\` |
 | Skills | `%APPDATA%\OpenMinis\skills\` |
 | 日志 | `%APPDATA%\OpenMinis\logs\` |
 | 附件 | `%APPDATA%\OpenMinis\attachments\<会话ID>\` |
 | Agent 默认工作区 | `%USERPROFILE%\OpenMinis\workspace` |
+
+密钥用 Windows DPAPI 按当前 Windows 账户加密（P3-1）。旧版本留在 settings.json 里的明文密钥，会在首次启动时迁移进去并清掉。把数据目录复制到别的电脑或别的 Windows 账户后密钥无法解密：设置 › 模型会列出解不开的密钥，重新输入即可；在你重新输入或点“忘记”之前，旧的加密副本不会被删除。
 
 可用环境变量 `OPENMINIS_HOME` 或 JVM 参数 `-Dopenminis.home=...` 更改数据目录。
 

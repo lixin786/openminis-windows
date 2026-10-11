@@ -20,7 +20,10 @@ enum class ProviderKind(val label: String, val defaultBaseUrl: String, val defau
 
 @Serializable
 data class ProviderSettings(
+    /** In memory only on Windows: settings.json keeps "" and [apiKeyStore] = "dpapi" (P3-1, secrets.json). */
     val apiKey: String = "",
+    /** P3-1 marker: "dpapi" = the key is in secrets.json; "" = no key (or a non-Windows dev build). */
+    val apiKeyStore: String = "",
     val baseUrl: String = "",
     val model: String = "",
     /** Image input for this provider's models: null = auto (upstream catalog / provider default), true/false = override. */
@@ -101,10 +104,24 @@ data class AppSettings(
     fun workspace(): File = workspaceDir.trim().takeIf { it.isNotEmpty() }?.let(::File) ?: AppPaths.defaultWorkspace()
 }
 
-class SettingsStore(private val file: File) {
+class SettingsStore(
+    private val file: File,
+    /** P3-1: DPAPI-backed store on Windows; null = keys stay in settings.json (non-Windows dev builds only). */
+    private val secrets: com.openminis.desktop.secrets.SecretStore? = null,
+) {
     private val json = Json { ignoreUnknownKeys = true; prettyPrint = true; encodeDefaults = true }
 
-    fun load(): AppSettings {
+    /** A stored secret that could not be decrypted at load (other Windows user / machine, damaged file). */
+    data class UnreadableSecret(val id: String, val label: String, val reason: String)
+
+    /** Filled by [load]; the blobs are kept (never silently deleted) until the user re-enters or forgets them. */
+    @Volatile var unreadable: List<UnreadableSecret> = emptyList(); private set
+    /** Set when moving plain-text keys into DPAPI failed at load; settings.json was left untouched. */
+    @Volatile var migrationError: String? = null; private set
+    /** id → plaintext last written, so an unchanged key is not re-encrypted on every save. Memory only. */
+    private val written = HashMap<String, String>()
+
+    @Synchronized fun load(): AppSettings {
         val loaded = try {
             if (file.exists()) json.decodeFromString(AppSettings.serializer(), file.readText(Charsets.UTF_8)) else AppSettings()
         } catch (e: Exception) {
@@ -112,15 +129,45 @@ class SettingsStore(private val file: File) {
             AppSettings()
         }
         val migrated = migrate(loaded)
-        if (migrated != loaded && file.exists()) {
+        if (migrated != loaded && file.exists())
             com.openminis.app.logging.AppLogger.warning("Settings", "security migration r${loaded.securityRevision} → r${migrated.securityRevision}: shell confirmation re-enabled")
-            runCatching { save(migrated) }
+        val (revealed, plainOnDisk) = reveal(migrated)
+        if ((migrated != loaded || plainOnDisk) && file.exists()) {
+            try {
+                saveLocked(revealed)
+                if (plainOnDisk) com.openminis.app.logging.AppLogger.info("Settings", "plain-text secrets moved into DPAPI storage and removed from settings.json")
+            } catch (e: Exception) {
+                migrationError = e.message ?: e.javaClass.simpleName
+                com.openminis.app.logging.AppLogger.error("Settings", "could not move plain-text secrets into DPAPI storage: $migrationError")
+            }
         }
-        return migrated
+        return revealed
+    }
+
+    /** Fills the in-memory secrets from secrets.json. Returns the settings and whether plaintext was found on disk. */
+    private fun reveal(s: AppSettings): Pair<AppSettings, Boolean> {
+        val bad = mutableListOf<UnreadableSecret>()
+        var plain = false
+        fun open(id: String, label: String, value: String, marker: String): String {
+            if (value.isNotEmpty()) { if (secrets != null) plain = true; return value }
+            if (marker != STORE_DPAPI) return value
+            val store = secrets ?: run { bad += UnreadableSecret(id, label, "DPAPI is only available on Windows"); return "" }
+            return try { store.get(id).also { written[id] = it } } catch (e: Exception) {
+                bad += UnreadableSecret(id, label, e.message ?: e.javaClass.simpleName); ""
+            }
+        }
+        val providers = s.providers.mapValues { (kind, ps) -> ps.copy(apiKey = open(providerKeyId(kind), kind.label, ps.apiKey, ps.apiKeyStore)) }
+        val n = s.network
+        val network = n.copy(proxyPassword = open(PROXY_PASSWORD_ID, "Proxy password", n.proxyPassword, n.proxyPasswordStore))
+        unreadable = bad
+        return s.copy(providers = providers, network = network) to plain
     }
 
     companion object {
         const val SECURITY_REVISION = 1
+        const val STORE_DPAPI = "dpapi"
+        const val PROXY_PASSWORD_ID = "network.proxyPassword"
+        fun providerKeyId(kind: ProviderKind) = "provider.${kind.name}.apiKey"
 
         /**
          * r1 (security batch): before it, "Always allow" on a shell approval permanently switched
@@ -136,9 +183,51 @@ class SettingsStore(private val file: File) {
         }
     }
 
-    fun save(settings: AppSettings) {
+    @Synchronized fun save(settings: AppSettings) = saveLocked(settings)
+
+    /**
+     * Settings › "Forget keys that cannot be decrypted": drops their blobs and markers. Nothing else does that —
+     * a key that cannot be read on this machine is kept until the user re-enters it or forgets it here.
+     */
+    @Synchronized fun forgetUnreadable(current: AppSettings) {
+        unreadable = emptyList()
+        saveLocked(current)
+    }
+
+    /**
+     * With DPAPI: secrets.json is written first (one atomic write), then settings.json without any plaintext.
+     * If encryption fails, nothing is written and the exception propagates (the old files stay as they were).
+     */
+    private fun saveLocked(settings: AppSettings) {
         file.parentFile?.mkdirs()
-        atomicWrite(file, json.encodeToString(AppSettings.serializer(), settings))
+        val store = secrets
+        if (store == null) { atomicWrite(file, json.encodeToString(AppSettings.serializer(), settings)); return }
+        val keepUnreadable = unreadable.map { it.id }.toMutableSet()
+        val put = LinkedHashMap<String, String>()
+        val stored = HashSet<String>()
+        fun seal(id: String, value: String): String {
+            if (value.isNotEmpty()) {
+                if (written[id] != value) put[id] = value
+                keepUnreadable.remove(id)   // re-entered: the new key replaces the unreadable blob
+                stored += id
+                return STORE_DPAPI
+            }
+            if (id in keepUnreadable) { stored += id; return STORE_DPAPI }
+            return ""
+        }
+        val providers = settings.providers.mapValues { (kind, ps) ->
+            ps.copy(apiKey = "", apiKeyStore = seal(providerKeyId(kind), ps.apiKey))
+        }
+        val n = settings.network
+        val network = n.copy(proxyPassword = "", proxyPasswordStore = seal(PROXY_PASSWORD_ID, n.proxyPassword))
+        // Unreadable blobs of providers no longer listed are kept as well.
+        stored += keepUnreadable
+        val remove = store.ids() - stored
+        store.update(put, remove)
+        put.forEach { (k, v) -> written[k] = v }
+        remove.forEach { written.remove(it) }
+        unreadable = unreadable.filter { it.id in keepUnreadable }
+        atomicWrite(file, json.encodeToString(AppSettings.serializer(), settings.copy(providers = providers, network = network)))
     }
 }
 

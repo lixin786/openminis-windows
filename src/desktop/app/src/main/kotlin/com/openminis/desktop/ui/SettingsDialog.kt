@@ -182,6 +182,11 @@ fun SettingsDialog(state: AppState, onClose: () -> Unit) {
                                 }
                             },
                         )
+                        // P3-1: a stored key this Windows account cannot decrypt — say so, never show it as "no key".
+                        val keyId = com.openminis.desktop.core.SettingsStore.providerKeyId(editing)
+                        if (ps.apiKey.isEmpty() && state.unreadableSecrets.any { it.id == keyId })
+                            Text(tr("secrets.unreadable_item", editing.label), style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(vertical = 4.dp))
                         OutlinedTextField(
                             value = ps.baseUrl, onValueChange = { draft = draft.withProvider(editing, ps.copy(baseUrl = it)) },
                             label = { Text(tr("settings.base_url", editing.defaultBaseUrl)) }, singleLine = true, modifier = Modifier.fillMaxWidth().tabMovesFocus(),
@@ -198,7 +203,12 @@ fun SettingsDialog(state: AppState, onClose: () -> Unit) {
                                 { draft = draft.withProvider(editing, ps.copy(imageInput = it)) },
                             )
                         }
-                        Hint(tr("settings.keys_plain", state.paths.settingsFile.absolutePath))
+                        if (state.secretsProtected) Hint(tr("settings.keys_dpapi", state.paths.secretsFile.absolutePath))
+                        else Hint(tr("settings.keys_plain", state.paths.settingsFile.absolutePath))
+                        if (state.unreadableSecrets.isNotEmpty()) {
+                            Hint(tr("secrets.unreadable", state.unreadableSecrets.joinToString(tr("list_sep")) { state.secretLabel(it) }))
+                            OutlinedButton(onClick = { state.forgetUnreadableSecrets() }) { Text(tr("secrets.forget")) }
+                        }
 
                         Section(tr("settings.fallback"))
                         Hint(tr("settings.fallback.hint"))

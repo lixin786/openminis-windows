@@ -36,6 +36,9 @@ dependencies {
     implementation("com.mikepenz:multiplatform-markdown-renderer-m3-jvm:0.28.0")
     // Pure-Java jieba (Apache-2.0) — stands in for upstream's CppJieba JNI in shared/JiebaEngine.kt.
     implementation("com.huaban:jieba-analysis:1.0.2")
+    // P3-1: Windows DPAPI (CryptProtectData, CurrentUser scope) for API keys — JNA (Apache-2.0 / LGPL-2.1 dual).
+    implementation("net.java.dev.jna:jna:5.15.0")
+    implementation("net.java.dev.jna:jna-platform:5.15.0")
 
     windowsRuntime("org.jetbrains.skiko:skiko-awt-runtime-windows-x64:$skikoVersion")
 

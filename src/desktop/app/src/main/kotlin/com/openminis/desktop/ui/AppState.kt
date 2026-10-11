@@ -47,7 +47,8 @@ import java.io.File
 class PendingApproval(val request: ApprovalRequest, val answer: CompletableDeferred<Boolean>)
 
 class AppState(val paths: AppPaths, private val scope: CoroutineScope) {
-    private val settingsStore = SettingsStore(paths.settingsFile)
+    private val settingsStore = SettingsStore(paths.settingsFile,
+        com.openminis.desktop.secrets.SecretProtector.platform()?.let { com.openminis.desktop.secrets.SecretStore(paths.secretsFile, it) })
     private val store = ConversationStore(paths.conversationsDir)
     val memory = MemoryStore(paths.memoryDir)
     val skills = SkillLoader { skillRoots() }
@@ -57,6 +58,27 @@ class AppState(val paths: AppPaths, private val scope: CoroutineScope) {
 
     var settings by mutableStateOf(settingsStore.load())
         private set
+    /** P3-1: true on Windows (keys encrypted with DPAPI), false on dev builds elsewhere (plain text). */
+    val secretsProtected: Boolean = com.openminis.desktop.secrets.SecretProtector.platform() != null
+    /** P3-1: stored keys this Windows user / machine cannot decrypt (shown in Settings › Models). */
+    var unreadableSecrets by mutableStateOf(settingsStore.unreadable)
+        private set
+
+    /** Provider name, or the localized "Password" of Settings › Network for the proxy password. */
+    fun secretLabel(u: SettingsStore.UnreadableSecret): String =
+        if (u.id == SettingsStore.PROXY_PASSWORD_ID) com.openminis.desktop.i18n.I18n.tr("net.password") else u.label
+
+    /** Settings › Models › Forget: drops the undecryptable blobs (the user re-enters the keys). */
+    fun forgetUnreadableSecrets() {
+        val s = settings
+        scope.launch(Dispatchers.IO) {
+            val r = runCatching { settingsStore.forgetUnreadable(s) }
+            withContext(Dispatchers.Main) {
+                unreadableSecrets = settingsStore.unreadable
+                r.onFailure { toast = com.openminis.desktop.i18n.I18n.tr("secrets.save_failed", it.message ?: it.javaClass.simpleName) }
+            }
+        }
+    }
 
     /** [batch13] Phone link: read-only MCP server on private LAN addresses (MCP-SERVER.md). */
     val remote = com.openminis.desktop.remote.RemoteMcpController(paths.root, com.openminis.app.BuildConfig.VERSION_NAME) { remoteTools }
@@ -348,6 +370,11 @@ class AppState(val paths: AppPaths, private val scope: CoroutineScope) {
         mcp.onChange = { scope.launch(Dispatchers.Main) { mcpTick++ } }
         scheduler.onChange = { scope.launch(Dispatchers.Main) { scheduledTick++ } }
         remote.onChange = { scope.launch(Dispatchers.Main) { remoteTick++ } }
+        // P3-1: say it plainly when stored keys cannot be decrypted here, or the plain-text move failed.
+        settingsStore.migrationError?.let { toast = com.openminis.desktop.i18n.I18n.tr("secrets.migration_failed", it) }
+            ?: unreadableSecrets.takeIf { it.isNotEmpty() }?.let { u ->
+                toast = com.openminis.desktop.i18n.I18n.tr("secrets.unreadable", u.joinToString(com.openminis.desktop.i18n.I18n.tr("list_sep")) { secretLabel(it) })
+            }
         if (settings.remoteMcp.enabled) scope.launch(Dispatchers.IO) { remote.apply(settings.remoteMcp) }
         scheduler.start()
         Runtime.getRuntime().addShutdownHook(Thread { runCatching { mcp.shutdown() }; runCatching { remote.shutdown() } })
@@ -373,7 +400,13 @@ class AppState(val paths: AppPaths, private val scope: CoroutineScope) {
         if (s.remoteMcp != settings.remoteMcp) scope.launch(Dispatchers.IO) { remote.apply(s.remoteMcp) }
         settings = s
         com.openminis.app.data.FastModePrefs.setEnabled(false)
-        scope.launch(Dispatchers.IO) { settingsStore.save(s) }
+        scope.launch(Dispatchers.IO) {
+            val r = runCatching { settingsStore.save(s) }
+            withContext(Dispatchers.Main) {
+                unreadableSecrets = settingsStore.unreadable
+                r.onFailure { toast = com.openminis.desktop.i18n.I18n.tr("secrets.save_failed", it.message ?: it.javaClass.simpleName) }
+            }
+        }
     }
 
     fun newChat() {
