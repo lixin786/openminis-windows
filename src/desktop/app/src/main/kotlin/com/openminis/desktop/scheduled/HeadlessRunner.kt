@@ -24,7 +24,7 @@ object HeadlessRunner {
 
     fun run(paths: AppPaths, clock: () -> Long = System::currentTimeMillis): Int {
         val lock = SchedulerLock(File(paths.root, SchedulerLock.FILE_NAME), "headless")
-        when (val a = lock.tryAcquire()) {
+        when (val a = lock.tryAcquireAllowingDeadHolder()) {
             is SchedulerLock.Result.Busy -> { AppLogger.info(TAG, "skipped: ${a.holder} holds the lock (the app's timer or another pass runs the tasks)"); return 0 }
             is SchedulerLock.Result.Acquired -> Unit
         }

@@ -391,7 +391,7 @@ class AppState(
         val now = System.currentTimeMillis()
         if (now - lockTriedAt < 15_000) return false
         lockTriedAt = now
-        return when (val r = schedulerLock.tryAcquire()) {
+        return when (val r = schedulerLock.tryAcquireAllowingDeadHolder(deadHolderGraceMs = 0)) {
             is com.openminis.desktop.scheduled.SchedulerLock.Result.Busy -> { com.openminis.app.logging.AppLogger.info("Scheduled", "timer waits: ${r.holder} holds the lock"); false }
             is com.openminis.desktop.scheduled.SchedulerLock.Result.Acquired -> { onSchedulerLockGained(); true }
         }

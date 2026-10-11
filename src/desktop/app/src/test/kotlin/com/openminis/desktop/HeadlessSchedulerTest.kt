@@ -170,12 +170,39 @@ class HeadlessSchedulerTest {
             val busy = SchedulerLock(f, "app", pid = 4242).tryAcquire()
             assertTrue(busy is SchedulerLock.Result.Busy && busy.holder.startsWith("headless pid=${child.pid()}"), busy.toString())
             child.destroyForcibly(); assertTrue(child.waitFor(20, java.util.concurrent.TimeUnit.SECONDS))
+            assertFalse(SchedulerLock.processAlive(child.pid()))
+            // Windows may release a killed process's locks a moment after it is gone (seen in Gradle's test worker):
+            // the production path polls while the recorded holder is dead, so the test goes through it too.
             val app = SchedulerLock(f, "app", pid = 4242)
-            val r = app.tryAcquire()
-            assertTrue(r is SchedulerLock.Result.Acquired && r.staleFrom!!.startsWith("headless pid=${child.pid()}"), r.toString())
+            val t0 = System.currentTimeMillis()
+            val r = app.tryAcquireAllowingDeadHolder(deadHolderGraceMs = 5_000)
+            assertTrue(r is SchedulerLock.Result.Acquired && r.staleFrom!!.startsWith("headless pid=${child.pid()}"),
+                "$r after ${System.currentTimeMillis() - t0} ms")
             assertEquals(4242, JSONObject(f.readText()).getLong("pid"))
             app.release()
         } finally { child.destroyForcibly() }
+    }
+
+    @Test fun deadHolderGraceOnlyWaitsForDeadHolders() {
+        val f = File(TestSupport.tmp("lockgrace"), SchedulerLock.FILE_NAME)
+        val holder = SchedulerLock(f, "app", pid = 111); holder.tryAcquire()
+        try {
+            // live holder: answered at once, no waiting
+            var t0 = System.currentTimeMillis()
+            val live = SchedulerLock(f, "headless", pid = 222).tryAcquireAllowingDeadHolder(2_000, isAlive = { true })
+            assertTrue(live is SchedulerLock.Result.Busy && live.holderPid == 111L, live.toString())
+            assertTrue(System.currentTimeMillis() - t0 < 1_000)
+            // "dead" holder whose lock is not yet released: polls, then gives up after the grace
+            t0 = System.currentTimeMillis()
+            val dead = SchedulerLock(f, "headless", pid = 222).tryAcquireAllowingDeadHolder(300, pollMs = 20, isAlive = { false })
+            assertTrue(dead is SchedulerLock.Result.Busy && System.currentTimeMillis() - t0 >= 300, dead.toString())
+            // released during the grace: taken
+            val waiter = SchedulerLock(f, "headless", pid = 222)
+            val th = Thread { Thread.sleep(150); holder.release() }.apply { start() }
+            val got = waiter.tryAcquireAllowingDeadHolder(3_000, pollMs = 20, isAlive = { false })
+            th.join()
+            assertTrue(got is SchedulerLock.Result.Acquired, got.toString()); waiter.release()
+        } finally { holder.release() }
     }
 
     @Test fun headlessStateRoundTrip() {

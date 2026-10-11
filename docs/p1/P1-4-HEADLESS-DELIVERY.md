@@ -48,3 +48,7 @@
 ## 修复：headless 退出前等待未完成的写盘
 
 AppState 的会话/记录写盘是挂在 scope 上的异步 IO 任务；headless 结束时直接 `scope.cancel()` 可能把尚未执行的写盘取消，出现「运行记录 ok、会话文件里没有回复」。新增端到端用例后顺序变化暴露了这个竞态。`HeadlessRunner` 现在在 cancel 之前 drain scope 子任务（上限 10 s，超时记日志）。HeadlessSchedulerTest 连跑 5 次全绿。
+
+## 锁：死持有者宽限（Windows 真机反馈后）
+
+Windows 回收被杀进程的文件锁是异步的，用户在 Gradle 测试工人里稳定复现“pid 已死但 tryLock 仍失败”。`SchedulerLock.tryAcquireAllowingDeadHolder(graceMs)`：Busy 时若锁文件记录的 pid 已不存活，则每 50 ms 重试直至宽限结束；持有者存活则立即返回 Busy。headless 入口用 2 s 宽限；应用定时器保持 0（本来就每 15 s 重试）。测试走同一路径（5 s 窗口），另有用例确认活持有者不等待、死持有者宽限后放弃、宽限内释放即接管。

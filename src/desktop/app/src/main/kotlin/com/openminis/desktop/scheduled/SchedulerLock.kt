@@ -20,7 +20,8 @@ class SchedulerLock(val file: File, private val owner: String, private val pid: 
     sealed interface Result {
         /** [staleFrom] = what the previous, now dead, holder wrote (null = the file was empty / new). */
         data class Acquired(val staleFrom: String?) : Result
-        data class Busy(val holder: String) : Result
+        /** [holderPid] = the pid the holder wrote, when readable. */
+        data class Busy(val holder: String, val holderPid: Long? = null) : Result
     }
 
     private var raf: RandomAccessFile? = null
@@ -34,7 +35,7 @@ class SchedulerLock(val file: File, private val owner: String, private val pid: 
         val l = try { r.channel.tryLock(LOCK_POS, 1, false) } catch (e: OverlappingFileLockException) { null } catch (e: Exception) {
             AppLogger.warning(TAG, "lock failed: ${e.message}"); null
         }
-        if (l == null) { val h = describe(read(r)); r.close(); return Result.Busy(h) }
+        if (l == null) { val text = read(r); r.close(); return Result.Busy(describe(text), runCatching { JSONObject(text).optLong("pid") }.getOrNull()?.takeIf { it > 0 }) }
         val previous = read(r)
         val stale = previous.takeIf { it.isNotBlank() }?.let { p ->
             val o = runCatching { JSONObject(p) }.getOrNull()
@@ -46,6 +47,22 @@ class SchedulerLock(val file: File, private val owner: String, private val pid: 
         raf = r; lock = l
         if (stale != null) AppLogger.warning(TAG, "took over a stale lock ($stale)")
         return Result.Acquired(stale)
+    }
+
+    /**
+     * [tryAcquire], but when the recorded holder process is already gone, keep retrying for up to [deadHolderGraceMs]:
+     * Windows releases a killed process's file locks asynchronously, so "dead but still locked" can last a moment.
+     * A live holder is answered at once (no waiting behind the app).
+     */
+    fun tryAcquireAllowingDeadHolder(deadHolderGraceMs: Long = 2_000, pollMs: Long = 50, isAlive: (Long) -> Boolean = ::processAlive): Result {
+        val deadline = System.currentTimeMillis() + deadHolderGraceMs
+        while (true) {
+            val r = tryAcquire()
+            if (r !is Result.Busy) return r
+            val pid = r.holderPid
+            if (pid == null || pid == this.pid || isAlive(pid) || System.currentTimeMillis() >= deadline) return r
+            Thread.sleep(pollMs)
+        }
     }
 
     @Synchronized fun release() {
@@ -66,6 +83,7 @@ class SchedulerLock(val file: File, private val owner: String, private val pid: 
     companion object {
         private const val TAG = "Scheduled"
         const val FILE_NAME = "run-due-tasks.lock"
+        fun processAlive(pid: Long): Boolean = ProcessHandle.of(pid).map { it.isAlive }.orElse(false)
         /** Locked byte, past the JSON text (a range may lie beyond the end of the file). */
         const val LOCK_POS = 1L shl 20
     }
