@@ -56,6 +56,7 @@ enum class SettingsPage(val group: SettingsGroup, val key: String) {
     MEMORY(SettingsGroup.AGENT, "settings.page.memory"),
     SCHEDULED(SettingsGroup.AGENT, "settings.page.scheduled"),
     REMOTE(SettingsGroup.SYSTEM, "settings.page.remote"),
+    BACKUP(SettingsGroup.SYSTEM, "settings.page.backup"),
     ABOUT(SettingsGroup.SYSTEM, "settings.page.about"),
     ADVANCED(SettingsGroup.SYSTEM, "settings.page.advanced");
     companion object { fun of(g: SettingsGroup) = entries.filter { it.group == g } }
@@ -74,6 +75,7 @@ private fun pageIcon(p: SettingsPage) = when (p) {
     SettingsPage.MEMORY -> Lucide.Brain
     SettingsPage.SCHEDULED -> Lucide.CalendarClock
     SettingsPage.REMOTE -> Lucide.Smartphone
+    SettingsPage.BACKUP -> Lucide.Database
     SettingsPage.ABOUT -> Lucide.Info
     SettingsPage.ADVANCED -> Lucide.ShieldAlert
 }
@@ -319,11 +321,14 @@ fun SettingsDialog(state: AppState, onClose: () -> Unit) {
                         }
                                 }
                                 SettingsPage.REMOTE -> RemoteSection(state, draft.remoteMcp) { draft = draft.copy(remoteMcp = it) }
+                                SettingsPage.BACKUP -> BackupSection(state, onRestored = onClose)
                                 SettingsPage.ABOUT -> {
                         AboutPage()
+                        UpdateCheckSection(state)
                         Section(tr("settings.data"))
                         Hint(tr("settings.app_data", state.paths.root.absolutePath))
                         OutlinedButton(onClick = { state.openInExplorer(state.paths.root) }) { Text(tr("menu.open_data")) }
+                        OldBackupsSection(state)
                                 }
                                 SettingsPage.ADVANCED -> {
                         Surface(color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f), shape = RoundedCornerShape(8.dp), modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {

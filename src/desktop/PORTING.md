@@ -141,7 +141,7 @@ Status: ✅ done · 🟡 partial · ⬜ not started — table refreshed 2026-10-
 | P2-3 | OAuth logins (Claude Code, Codex/ChatGPT, Copilot) | ⬜ | Copilot device flow and OpenRouter PKCE look possible with public values; Claude Code / Codex need client ids & customization values that are not in the public mirror — impossible to reproduce faithfully; API keys stay the supported path. |
 | P2-4 | KaTeX math rendering | ⬜ | needs a WebView/JCEF or a native LaTeX renderer. |
 | P2-5 | i18n | ✅ (3 locales) | batch5 `61a45f0` + batch6 `3ca66f1`, verified: properties tables en / zh-CN / zh-TW, Settings › Language (system / en / zh-CN / zh-TW, live switch, follows Windows by default), `I18nTest` guards same keys, placeholders, no untranslated Chinese, no hard-coded English in the UI. Only the UI is translated; text sent to the model stays English. Upstream's other 19 locales are not ported. |
-| P2-6 | Backup / restore + update check | ⬜ | upstream uses rclone + Android storage. |
+| P2-6 | Backup / restore + update check | ✅ (needs real-machine check) | one zip + system file dialog, keys off by default, pre-restore backup + typed `restore` + rename-aside rollback; About › Check for updates (GitHub Releases via proxy settings, no download). Spec `BACKUP-RESTORE.md`, delivery `docs/p2/P2-6-DELIVERY.md`. |
 
 ### P3
 | # | Item | Status | Notes |

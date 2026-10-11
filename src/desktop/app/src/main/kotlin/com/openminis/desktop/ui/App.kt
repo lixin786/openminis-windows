@@ -165,6 +165,7 @@ fun App(state: AppState) {
             state.pendingApproval?.let { if (!isInline(state, it)) ApprovalDialog(state, it) }
             if (state.showSettings) SettingsDialog(state) { state.showSettings = false }
             if (state.showScheduled) ScheduledTasksWindow(state) { state.showScheduled = false }
+            state.restartRequired?.let { RestartRequiredDialog(state, it) }
             state.toast?.let { msg ->
                 AlertDialog(onDismissRequest = { state.toast = null }, confirmButton = {
                     TextButton(onClick = { state.toast = null }) { Text(tr("common.ok")) }

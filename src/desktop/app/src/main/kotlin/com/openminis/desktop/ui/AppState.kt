@@ -119,6 +119,16 @@ class AppState(val paths: AppPaths, private val scope: CoroutineScope) {
     /** Text to put into the composer once (e.g. "ask again" on a declined tool card); the composer clears it. */
     var composerPrefill by mutableStateOf<String?>(null)
     var toast by mutableStateOf<String?>(null)
+    // ---- P2-6 backup / restore
+    val backupsDir: File get() = File(paths.root, "backups")
+    /** Set after a restore: the app must restart before anything writes app data again. */
+    var restartRequired by mutableStateOf<com.openminis.desktop.core.Backup.Restored?>(null)
+    /** Wired in Main: start a new instance, then quit this one. */
+    var requestRestart: () -> Unit = {}
+    /** Busy with something a restore must not overwrite (a turn, a compaction or a scheduled run). */
+    val busyForRestore: Boolean get() = isRunning || compactingConversationId != null || scheduledRunning.isNotEmpty()
+    /** Right before the swap: nothing in the background may write into the folders being replaced. */
+    fun freezeForRestore() { runCatching { scheduler.stop() }; runCatching { remote.shutdown() }; runCatching { mcp.shutdown() } }
     /** Transient line under the chat ("Compacting context…", "Rate limited — retrying (1/3)…"). */
     var statusText by mutableStateOf<String?>(null)
         private set

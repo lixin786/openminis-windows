@@ -73,6 +73,11 @@ fun main(args: Array<String>) {
         fun savePlacement() { machine.snapshot()?.let { WindowPlacements.save(placementFile, it) } }
         // Idempotent: Alt+F4 may arrive both from the OS and from our own key handler.
         fun quit() { if (closing.getAndSet(true)) return; savePlacement(); state.shutdown(); exitApplication() }
+        // P2-6: "Restart now" after a restore (a manual restart is asked for when the command cannot be re-run).
+        state.requestRestart = {
+            if (!com.openminis.desktop.core.AppRestart.relaunch()) AppLogger.warning("Main", "relaunch unavailable; quitting for a manual restart")
+            quit()
+        }
 
         val immersive = state.settings.immersiveWindow
         // AWT cannot toggle decorations on a live window: the mode switch recreates it at the same geometry.
