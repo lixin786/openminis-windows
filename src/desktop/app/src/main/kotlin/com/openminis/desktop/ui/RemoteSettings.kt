@@ -79,6 +79,13 @@ internal fun RemoteSection(state: AppState, s: RemoteMcpSettings, onChange: (Rem
     Section(tr("remote.connect"))
     Hint(tr("remote.connect_hint"))
     val token = remember(tick) { state.remote.tokens.get() }
+    when (remember(tick, token) { state.remote.tokens.notice }) {
+        com.openminis.desktop.remote.RemoteTokenStore.Notice.REGENERATED_UNREADABLE ->
+            Text(tr("remote.token_regenerated"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+        com.openminis.desktop.remote.RemoteTokenStore.Notice.NOT_SAVED ->
+            Text(tr("remote.token_not_saved"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+        null -> {}
+    }
     val addrs = remember(tick, st) { st.bindings.map { it.address }.ifEmpty { LanAddresses.current().map { it.second.hostAddress } } }
     if (addrs.isEmpty()) Hint(tr("remote.no_lan"))
     addrs.forEach { a ->

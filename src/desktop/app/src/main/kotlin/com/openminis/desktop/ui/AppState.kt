@@ -375,6 +375,8 @@ class AppState(val paths: AppPaths, private val scope: CoroutineScope) {
             ?: unreadableSecrets.takeIf { it.isNotEmpty() }?.let { u ->
                 toast = com.openminis.desktop.i18n.I18n.tr("secrets.unreadable", u.joinToString(com.openminis.desktop.i18n.I18n.tr("list_sep")) { secretLabel(it) })
             }
+        // P3-1 follow-up: move an old plain-text phone-link token into DPAPI even while the phone link is off.
+        scope.launch(Dispatchers.IO) { runCatching { remote.tokens.migrate() }; withContext(Dispatchers.Main) { remoteTick++ } }
         if (settings.remoteMcp.enabled) scope.launch(Dispatchers.IO) { remote.apply(settings.remoteMcp) }
         scheduler.start()
         Runtime.getRuntime().addShutdownHook(Thread { runCatching { mcp.shutdown() }; runCatching { remote.shutdown() } })

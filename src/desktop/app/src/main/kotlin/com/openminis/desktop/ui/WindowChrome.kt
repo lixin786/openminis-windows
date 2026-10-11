@@ -60,8 +60,29 @@ class WindowChrome(
     /** Alt+Space: the window menu at the top-left of the main title region. */
     fun openMenu(region: String = TITLE_REGION_TOP) { menuRegion = region; menuAt = Offset(8f, 8f) }
     private var window: java.awt.Window? = null
+    /**
+     * [immersive batch 2] true once DWM draws this window's frame (Win11 rounded corners + its own border):
+     * the self-drawn 1 px outline is then left out (DWM clips a square outline at the corners).
+     */
+    var dwmFrame by mutableStateOf(false); private set
+    private var dwmOn = false
 
-    private fun sync() { maximized = machine.maximized }
+    private fun sync() {
+        maximized = machine.maximized
+        // Corners off while maximized (and the shadow margins), back on when floating.
+        if (dwmOn) window?.let { dwmFrame = com.openminis.desktop.platform.WindowsDwm.setMaximized(it, maximized) }
+    }
+
+    private val dwmHost = object : com.openminis.desktop.platform.WindowsDwm.Host {
+        override val maximizedByUs get() = machine.maximized
+        override val canMaximize get() = this@WindowChrome.canMaximize
+        override fun requestMaximize() {
+            // An OS maximize (Win+Up) leaves the frame zoomed: un-zoom first, then maximize to the work area our way.
+            (window as? Frame)?.let { if (it.extendedState and Frame.MAXIMIZED_BOTH != 0) it.extendedState = it.extendedState and Frame.MAXIMIZED_BOTH.inv() }
+            if (!machine.maximized) maximize() else sync()
+        }
+        override fun requestRestore() { if (machine.maximized) restore() }
+    }
 
     fun maximize() { if (canMaximize) { machine.maximize(); sync() } }
     fun restore() { machine.restore(); sync() }
@@ -82,6 +103,7 @@ class WindowChrome(
             override fun windowActivated(e: java.awt.event.WindowEvent?) { active = true }
             override fun windowDeactivated(e: java.awt.event.WindowEvent?) { active = false }
         })
+        com.openminis.desktop.platform.WindowsDwm.install(w, dwmHost, machine.maximized)?.let { r -> dwmOn = true; dwmFrame = r.rounded }
         sync()
     }
 
@@ -208,7 +230,7 @@ fun ImmersiveFrame(chrome: WindowChrome?, content: @Composable () -> Unit) {
     CompositionLocalProvider(LocalWindowChrome provides chrome) {
         Box(Modifier.fillMaxSize()) {
             Box(Modifier.fillMaxSize().then(
-                if (chrome.maximized) Modifier else Modifier.border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (chrome.active) 1f else 0.6f))
+                if (chrome.maximized || chrome.dwmFrame) Modifier else Modifier.border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (chrome.active) 1f else 0.6f))
             )) { content() }
             if (!chrome.maximized) ResizeHandles(chrome)
         }
