@@ -16,8 +16,31 @@ import com.openminis.desktop.remote.LanAddresses
 import com.openminis.desktop.remote.RemoteMcpController
 import com.openminis.desktop.remote.RemoteMcpSettings
 import com.openminis.desktop.ui.icons.Lucide
+import com.openminis.desktop.remote.McpHttpCore
+import com.openminis.desktop.remote.RemoteAudit
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+
+/** Audit/connection timestamps: local wall clock, same in every language. */
+internal fun auditTime(ms: Long): String = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date(ms))
+
+/** Bytes as the audit list shows them: 0 B, 812 B, 3.4 KB, 1.2 MB. */
+internal fun humanBytes(n: Int): String = when {
+    n < 1024 -> "$n B"
+    n < 1024 * 1024 -> String.format(Locale.US, "%.1f KB", n / 1024.0)
+    else -> String.format(Locale.US, "%.1f MB", n / (1024.0 * 1024.0))
+}
+
+/** i18n key of an audit outcome; unknown values fall back to the raw word. */
+internal fun outcomeKey(outcome: String): String? = when (outcome) {
+    RemoteAudit.OK, RemoteAudit.ERROR, RemoteAudit.TIMEOUT, RemoteAudit.UNKNOWN_TOOL -> "remote.audit.outcome.$outcome"
+    else -> null
+}
 
 /** The token shown on screen: first and last 4 characters only; Copy puts the full string on the clipboard. */
 internal fun maskToken(t: String): String = if (t.length <= 8) "••••" else t.take(4) + "••••••••" + t.takeLast(4)
@@ -83,4 +106,98 @@ internal fun RemoteSection(state: AppState, s: RemoteMcpSettings, onChange: (Rem
         }
     }
     Hint(tr("remote.rotate_hint"))
+
+    ConnectionsSection(state)
+    AuditSection(state)
 }
+
+/** 13.3: who is connected right now, with Disconnect; plus devices refused after a disconnect. */
+@Composable
+private fun ConnectionsSection(state: AppState) {
+    val tick = state.remoteTick
+    var poll by remember { mutableStateOf(0) }
+    // Sessions change without a settings event (a phone connects, idles out); re-read every 2 s while visible.
+    LaunchedEffect(Unit) { while (true) { delay(2_000); poll++ } }
+    val sessions = remember(tick, poll) { state.remote.core.sessionInfos() }
+    val blocked = remember(tick, poll) { state.remote.core.blockedAddresses() }
+
+    Section(tr("remote.sessions"))
+    if (sessions.isEmpty()) Hint(tr("remote.sessions.none"))
+    sessions.forEach { s ->
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
+            Column(Modifier.weight(1f)) {
+                Text(tr("remote.sessions.client", s.clientName.ifBlank { tr("remote.sessions.unnamed") }, s.remote),
+                    style = MaterialTheme.typography.bodyMedium)
+                Text(tr("remote.sessions.detail", auditTime(s.createdAt), auditTime(s.lastUsed), s.calls.toString()) +
+                    if (s.initialized) "" else " · " + tr("remote.sessions.handshaking"),
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Spacer(Modifier.width(8.dp))
+            OutlinedButton(onClick = { state.remote.kick(s.id) }) {
+                Icon(Lucide.X, null, Modifier.size(16.dp)); Spacer(Modifier.width(6.dp)); Text(tr("remote.sessions.kick"))
+            }
+        }
+    }
+    Hint(tr("remote.sessions.kick_hint", (McpHttpCore.KICK_BLOCK_MS / 60_000).toString()))
+    blocked.forEach { (ip, left) ->
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
+            Text(tr("remote.sessions.blocked", ip, ((left + 59_999) / 60_000).toString()),
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, modifier = Modifier.weight(1f))
+            TextButton(onClick = { state.remote.unblock(ip) }) { Text(tr("remote.sessions.unblock")) }
+        }
+    }
+}
+
+/** 13.3: the audit log (newest first), with Refresh and Clear. Never shows or stores the token or file contents. */
+@Composable
+private fun AuditSection(state: AppState) {
+    val tick = state.remoteTick
+    var reload by remember { mutableStateOf(0) }
+    var confirmClear by remember { mutableStateOf(false) }
+    var entries by remember { mutableStateOf<List<RemoteAudit.Entry>>(emptyList()) }
+    LaunchedEffect(tick, reload) { entries = withContext(Dispatchers.IO) { state.remote.audit.entries(AUDIT_SHOWN) } }
+
+    Section(tr("remote.audit"))
+    Hint(tr("remote.audit.hint"))
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        OutlinedButton(onClick = { reload++ }) {
+            Icon(Lucide.RefreshCw, null, Modifier.size(16.dp)); Spacer(Modifier.width(6.dp)); Text(tr("remote.audit.refresh"))
+        }
+        Spacer(Modifier.width(8.dp))
+        if (!confirmClear) {
+            OutlinedButton(enabled = entries.isNotEmpty(), onClick = { confirmClear = true }) {
+                Icon(Lucide.Trash, null, Modifier.size(16.dp)); Spacer(Modifier.width(6.dp)); Text(tr("remote.audit.clear"))
+            }
+        } else {
+            Button(onClick = { state.remote.clearAudit(); confirmClear = false; reload++ },
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)) { Text(tr("remote.audit.clear_confirm")) }
+            Spacer(Modifier.width(8.dp))
+            TextButton(onClick = { confirmClear = false }) { Text(tr("common.cancel")) }
+        }
+    }
+    if (entries.isEmpty()) Hint(tr("remote.audit.empty"))
+    entries.forEach { e ->
+        val failed = e.outcome != RemoteAudit.OK
+        Column(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(auditTime(e.time), fontFamily = LocalMonoFont.current, style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.width(8.dp))
+                Text(e.ip, fontFamily = LocalMonoFont.current, style = MaterialTheme.typography.bodySmall)
+                Spacer(Modifier.width(8.dp))
+                Text(e.tool, fontFamily = LocalMonoFont.current, style = MaterialTheme.typography.bodySmall)
+                Spacer(Modifier.width(8.dp))
+                Text(outcomeKey(e.outcome)?.let { tr(it) } ?: e.outcome, style = MaterialTheme.typography.bodySmall,
+                    color = if (failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.width(8.dp))
+                Text(humanBytes(e.bytes), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            if (e.path.isNotEmpty()) Text(e.path, fontFamily = LocalMonoFont.current, style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+        }
+    }
+    if (entries.size >= AUDIT_SHOWN) Hint(tr("remote.audit.truncated", AUDIT_SHOWN.toString()))
+}
+
+/** The page shows the newest this many; the file keeps more (capped at 2 MB). */
+internal const val AUDIT_SHOWN = 200

@@ -123,6 +123,13 @@ class RemoteMcpController(appRoot: File, version: String, tools: () -> RemoteToo
     /** New token; every phone must `add` again with the new connection string. */
     fun rotateToken(): String { val t = tokens.rotate(); core.dropAllSessions(); onChange(); return t }
 
+    /** 13.3: Settings › Phone link › Connections › Disconnect. Ends the device's sessions and refuses it for 10 min. */
+    fun kick(sessionId: String): Boolean = core.kick(sessionId).also { if (it) onChange() }
+    fun unblock(ip: String) { core.unblock(ip); onChange() }
+
+    /** 13.3: Settings › Phone link › Audit log › Clear. */
+    fun clearAudit() { audit.clear(); onChange() }
+
     fun shutdown() = server.stop()
 
     companion object {

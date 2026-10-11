@@ -79,6 +79,10 @@ class McpHttpCore(
         /** One tools/call may run this long; at most [MAX_CONCURRENT_CALLS] run at once. */
         const val CALL_TIMEOUT_MS = 10_000L
         const val MAX_CONCURRENT_CALLS = 4
+        /** 13.3: how long a device disconnected from Settings is refused. Rotating the token also lifts it. */
+        const val KICK_BLOCK_MS = 10 * 60_000L
+        /** No "session" in it: the phone must stop, not re-initialize in a loop. */
+        const val BODY_KICKED = """{"error":"forbidden: disconnected by the desktop user, retry later"}"""
         private const val TAG = "RemoteMcp"
 
         // Self-heal bodies (MUST contain "session" early). Fixed, short, nothing interpolated.
@@ -96,7 +100,14 @@ class McpHttpCore(
     class Session(val id: String, val remote: String, var lastUsed: Long) {
         @Volatile var initialized = false
         var clientName: String = ""
+        /** 13.3: shown in Settings › Phone link › Connections. */
+        val createdAt: Long = lastUsed
+        @Volatile var calls: Int = 0
     }
+
+    /** Read-only view for the settings page (no session object escapes the lock). */
+    data class SessionInfo(val id: String, val remote: String, val clientName: String, val createdAt: Long,
+                           val lastUsed: Long, val initialized: Boolean, val calls: Int)
 
     private val rnd = SecureRandom()
     private val sessions = object : LinkedHashMap<String, Session>(16, 0.75f, true) {}
@@ -104,8 +115,51 @@ class McpHttpCore(
 
     fun sessionCount(): Int = synchronized(lock) { expire(); sessions.size }
     fun sessionsSnapshot(): List<Session> = synchronized(lock) { expire(); sessions.values.toList() }
+    /** Most recently used first. */
+    fun sessionInfos(): List<SessionInfo> = synchronized(lock) {
+        expire()
+        sessions.values.map { SessionInfo(it.id, it.remote, it.clientName, it.createdAt, it.lastUsed, it.initialized, it.calls) }
+            .sortedByDescending { it.lastUsed }
+    }
     /** Token rotated or server stopped: every session ends at once (next request with the old token → 401). */
-    fun dropAllSessions() = synchronized(lock) { sessions.clear() }
+    fun dropAllSessions() = synchronized(lock) { sessions.clear(); synchronized(blocked) { blocked.clear() } }
+
+    // ---------------------------------------------------------------- 13.3 kick (disconnect a device)
+
+    /** Source address → blocked until (ms). A kicked device is refused (403) for [KICK_BLOCK_MS]. */
+    private val blocked = HashMap<String, Long>()
+
+    /**
+     * Ends every session of the device that owns [sessionId] and refuses that address for [KICK_BLOCK_MS].
+     * Dropping the session alone is not enough: the phone treats 404 "session not found" as a cue to
+     * re-initialize with the same token and would be back in a second. Returns false when the id is gone.
+     */
+    fun kick(sessionId: String): Boolean {
+        val ip = synchronized(lock) { sessions[sessionId]?.remote } ?: return false
+        kickAddress(ip)
+        return true
+    }
+
+    fun kickAddress(ip: String) {
+        synchronized(lock) { sessions.values.removeIf { it.remote == ip } }
+        synchronized(blocked) { blocked[ip] = now() + KICK_BLOCK_MS }
+        AppLogger.info(TAG, "$ip disconnected by the desktop user (refused for ${KICK_BLOCK_MS / 60_000} min)")
+    }
+
+    /** Address → remaining block in ms, for the settings page. */
+    fun blockedAddresses(): Map<String, Long> = synchronized(blocked) {
+        val t = now()
+        blocked.entries.removeIf { it.value <= t }
+        blocked.mapValues { it.value - t }
+    }
+
+    fun unblock(ip: String) = synchronized(blocked) { blocked.remove(ip); Unit }
+
+    private fun blockRemaining(ip: String): Long = synchronized(blocked) {
+        val until = blocked[ip] ?: return 0
+        val left = until - now()
+        if (left <= 0) { blocked.remove(ip); 0 } else left
+    }
 
     private fun expire() {
         val t = now()
@@ -200,6 +254,13 @@ class McpHttpCore(
         }
         clearFailures(ip)
 
+        // 3b. 13.3: a device the desktop user disconnected stays out for a while (after auth, so probes still count)
+        val kicked = blockRemaining(ip)
+        if (kicked > 0) {
+            val secs = ((kicked + 999) / 1000).toString()
+            return McpResponse(403, JSON + ("Retry-After" to secs), BODY_KICKED)
+        }
+
         // 4. verb and headers
         when (req.method.uppercase()) {
             "POST", "DELETE" -> Unit
@@ -262,6 +323,7 @@ class McpHttpCore(
                 if (!session.initialized) return rpcError(msg, -32600, "not initialized: send notifications/initialized first")
                 val p = msg.optJSONObject("params") ?: return rpcError(msg, -32602, "missing params")
                 val name = p.optString("name", "")
+                session.calls++
                 val args = p.optJSONObject("arguments") ?: JSONObject()
                 val set = tools()
                 val path = args.optString("path", "").ifEmpty { if (name == "list_dir" || name == "search_files") "." else "" }
