@@ -39,7 +39,7 @@ class HeadlessSchedulerTest {
         override fun run(command: List<String>): CommandExecutor.Result {
             calls += command
             val i = command.indexOf("/XML")
-            if (i >= 0) lastXml = File(command[i + 1]).readBytes().let { b -> String(b, 2, b.size - 2, Charsets.UTF_16LE) }
+            if (i >= 0 && i + 1 < command.size) lastXml = File(command[i + 1]).readBytes().let { b -> String(b, 2, b.size - 2, Charsets.UTF_16LE) }
             return answer(command)
         }
     }
@@ -117,6 +117,65 @@ class HeadlessSchedulerTest {
         val r = SchedulerLock(f, "app", pid = 333).tryAcquire()
         assertTrue(r is SchedulerLock.Result.Acquired && r.staleFrom!!.startsWith("headless pid=999999"), r.toString())
         assertEquals(333, JSONObject(f.readText()).getLong("pid"))
+    }
+
+    @Test fun startupReconcileRepairsMissingStaleAndLeftoverTasks() {
+        val cmd = LaunchCommand("C:\\Program Files\\OpenMinis\\OpenMinis.exe", listOf("--run-due-tasks"))
+        fun exported(c: LaunchCommand, iv: Int) = SystemTask.taskXml(c, iv, java.time.LocalDateTime.of(2026, 10, 12, 2, 0))
+        fun run(present: String?, enabled: Boolean, iv: Int = 5, launcher: LaunchCommand? = cmd, createOk: Boolean = true): Pair<SystemTask.Reconcile, FakeExec> {
+            var exists = present != null
+            val fx = FakeExec { c ->
+                when {
+                    "/XML" in c && "/Query" in c -> if (exists) CommandExecutor.Result(0, present!!) else CommandExecutor.Result(1, "ERROR: The system cannot find the file specified.")
+                    "/Create" in c -> if (createOk) { exists = true; CommandExecutor.Result(0, "SUCCESS") } else CommandExecutor.Result(1, "ERROR: Access is denied.")
+                    "/Delete" in c -> { exists = false; CommandExecutor.Result(0, "SUCCESS") }
+                    else -> CommandExecutor.Result(if (exists) 0 else 1, "")
+                }
+            }
+            return SystemTask(fx, TestSupport.tmp("rx")).reconcile(enabled, iv, launcher) to fx
+        }
+        fun creates(fx: FakeExec) = fx.calls.count { "/Create" in it }
+        fun deletes(fx: FakeExec) = fx.calls.count { "/Delete" in it }
+
+        // on + in sync: query only, nothing rewritten (also case-insensitive path)
+        run(exported(cmd, 5), true).let { (r, fx) -> assertEquals(SystemTask.Reconciled.IN_SYNC, r.action); assertEquals(1, fx.calls.size) }
+        run(exported(cmd.copy(program = cmd.program.uppercase()), 5), true).let { (r, _) -> assertEquals(SystemTask.Reconciled.IN_SYNC, r.action) }
+        // on + gone (cleanup tool / update): registered again
+        run(null, true).let { (r, fx) -> assertEquals(SystemTask.Reconciled.REGISTERED, r.action); assertEquals(1, creates(fx)); assertTrue(fx.lastXml!!.contains("--run-due-tasks")) }
+        // on + app moved / other interval: replaced, pointing at the current program
+        run(exported(LaunchCommand("D:\\old\\OpenMinis.exe", listOf("--run-due-tasks")), 5), true).let { (r, fx) ->
+            assertEquals(SystemTask.Reconciled.REPAIRED, r.action); assertTrue(fx.lastXml!!.contains("<Command>C:\\Program Files\\OpenMinis\\OpenMinis.exe</Command>")) }
+        run(exported(cmd, 15), true, iv = 5).let { (r, fx) -> assertEquals(SystemTask.Reconciled.REPAIRED, r.action); assertTrue(fx.lastXml!!.contains("PT5M")) }
+        // on + garbage export: replaced rather than trusted
+        run("not xml", true).let { (r, _) -> assertEquals(SystemTask.Reconciled.REPAIRED, r.action) }
+        // on + cannot be started by Windows (dev classes): leave Windows alone
+        run(null, true, launcher = null).let { (r, fx) -> assertEquals(SystemTask.Reconciled.NO_LAUNCHER, r.action); assertEquals(0, creates(fx)) }
+        // on + Windows refuses: reported once, no retry loop
+        run(null, true, createOk = false).let { (r, fx) -> assertEquals(SystemTask.Reconciled.FAILED, r.action); assertTrue(r.error!!.contains("Access is denied")); assertEquals(1, creates(fx)) }
+        // off + leftover: removed; off + nothing: nothing touched
+        run(exported(cmd, 5), false).let { (r, fx) -> assertEquals(SystemTask.Reconciled.REMOVED, r.action); assertEquals(1, deletes(fx)); assertEquals(0, creates(fx)) }
+        run(null, false).let { (r, fx) -> assertEquals(SystemTask.Reconciled.IN_SYNC, r.action); assertEquals(1, fx.calls.size) }
+    }
+
+    /** A real second JVM takes the lock and is killed (no release, no cleanup): the next owner must take over. */
+    @Test fun lockOfAKilledProcessIsTakenOver() {
+        val f = File(TestSupport.tmp("lockkill"), SchedulerLock.FILE_NAME)
+        val javaExe = File(System.getProperty("java.home"), "bin/" + if (System.getProperty("os.name").startsWith("Windows")) "java.exe" else "java").path
+        val child = ProcessBuilder(javaExe, "-cp", System.getProperty("java.class.path"), LockHolderMain::class.java.name, f.absolutePath)
+            .redirectErrorStream(true).start()
+        try {
+            // skip JVM notices such as "Picked up JAVA_TOOL_OPTIONS" (the zh-CN run sets it)
+            val line = child.inputStream.bufferedReader().lineSequence().first { it == "LOCKED" || it.startsWith("BUSY") }
+            assertEquals("LOCKED", line)
+            val busy = SchedulerLock(f, "app", pid = 4242).tryAcquire()
+            assertTrue(busy is SchedulerLock.Result.Busy && busy.holder.startsWith("headless pid=${child.pid()}"), busy.toString())
+            child.destroyForcibly(); assertTrue(child.waitFor(20, java.util.concurrent.TimeUnit.SECONDS))
+            val app = SchedulerLock(f, "app", pid = 4242)
+            val r = app.tryAcquire()
+            assertTrue(r is SchedulerLock.Result.Acquired && r.staleFrom!!.startsWith("headless pid=${child.pid()}"), r.toString())
+            assertEquals(4242, JSONObject(f.readText()).getLong("pid"))
+            app.release()
+        } finally { child.destroyForcibly() }
     }
 
     @Test fun headlessStateRoundTrip() {
@@ -307,6 +366,8 @@ class HeadlessSchedulerTest {
         assertTrue(main.indexOf("\"java.awt.headless\", \"true\"") in 0 until appAt)
         assertTrue(main.contains("exitProcess(com.openminis.desktop.scheduled.HeadlessRunner.run(paths))"))
         // schtasks only behind the executor
+        val appState = File(src, "ui/AppState.kt").readText()
+        assertTrue(Regex("scheduler\\.start\\(\\)\\s*\\n\\s*reconcileHeadless\\(\\)").containsMatchIn(appState), "startup reconciles the Windows task (window app only)")
         val schtasks = src.walkTopDown().filter { it.isFile && it.extension == "kt" && "\"schtasks\"" in it.readText() }.map { it.name }.toList()
         assertEquals(listOf("SystemTask.kt"), schtasks)
         val repo = generateSequence(File("").absoluteFile) { it.parentFile }.first { File(it, "HEADLESS-SCHEDULER.md").isFile }
@@ -314,7 +375,7 @@ class HeadlessSchedulerTest {
         assertFalse(File(repo, "src/desktop/PORTING.md").readText().contains("Tasks do not run while the app is not running"))
         val keys = listOf("section", "toggle", "difference", "interval", "interval_n", "status_checking", "status_registered", "status_not_registered",
             "last_run", "last_never", "last_none_due", "last_result", "remove", "silent_hint", "windows_only", "no_launcher", "register_failed",
-            "unregister_failed", "notice").map { "headless.$it" } +
+            "unregister_failed", "repair_failed", "notice").map { "headless.$it" } +
             listOf("sched.last_run", "sched.run.headless", "sched.run.needs_approval", "sched.run.timeout", "sched.run.skipped_approval", "sched.runs_in_background")
         for (l in listOf("en", "zh-CN", "zh-TW")) keys.forEach { assertTrue(com.openminis.desktop.i18n.I18n.table(l)[it].orEmpty().isNotBlank(), "$l:$it") }
     }

@@ -62,6 +62,28 @@ class SystemTask(private val exec: CommandExecutor = CommandExecutor.SYSTEM, pri
     fun createCommand(xml: File) = listOf("schtasks", "/Create", "/F", "/TN", TASK_NAME, "/XML", xml.absolutePath)
     fun queryCommand() = listOf("schtasks", "/Query", "/TN", TASK_NAME, "/FO", "CSV", "/NH")
     fun deleteCommand() = listOf("schtasks", "/Delete", "/TN", TASK_NAME, "/F")
+    fun exportCommand() = listOf("schtasks", "/Query", "/TN", TASK_NAME, "/XML")
+
+    enum class Reconciled { IN_SYNC, REGISTERED, REPAIRED, REMOVED, NO_LAUNCHER, FAILED }
+    data class Reconcile(val action: Reconciled, val error: String? = null)
+
+    /**
+     * Startup check that Windows matches the setting. On but missing (system cleanup, an update) → register;
+     * on but pointing at another program / arguments / interval (the app was moved) → replace; off but present
+     * → remove. Never changes the setting: a failed repair is reported, the user's choice stays.
+     */
+    fun reconcile(enabled: Boolean, intervalMinutes: Int, launcher: LaunchCommand?): Reconcile {
+        val q = exec.run(exportCommand())
+        val exists = q.code == 0
+        if (!enabled) {
+            if (!exists) return Reconcile(Reconciled.IN_SYNC)
+            return unregister()?.let { Reconcile(Reconciled.FAILED, it) } ?: Reconcile(Reconciled.REMOVED)
+        }
+        if (launcher == null) return Reconcile(Reconciled.NO_LAUNCHER)
+        if (exists && matches(q.output, launcher, intervalMinutes)) return Reconcile(Reconciled.IN_SYNC)
+        return register(launcher, intervalMinutes)?.let { Reconcile(Reconciled.FAILED, it) }
+            ?: Reconcile(if (exists) Reconciled.REPAIRED else Reconciled.REGISTERED)
+    }
 
     /** Idempotent (/F replaces). Returns null on success, else schtasks' own message. */
     fun register(cmd: LaunchCommand, intervalMinutes: Int, start: java.time.LocalDateTime = java.time.LocalDateTime.now().withSecond(0).withNano(0)): String? {
@@ -92,6 +114,15 @@ class SystemTask(private val exec: CommandExecutor = CommandExecutor.SYSTEM, pri
     companion object {
         const val TASK_NAME = "OpenMinis\\Scheduled tasks"
         val INTERVALS = listOf(1, 5, 10, 15)
+
+        private fun unesc(s: String) = s.replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&apos;", "'").replace("&amp;", "&")
+        private fun tag(xml: String, name: String) = Regex("<$name>([^<]*)</$name>").find(xml)?.groupValues?.get(1)?.let(::unesc)?.trim()
+
+        /** Does an exported task run [cmd] every [intervalMinutes]? (Paths compare case-insensitively, as Windows does.) */
+        fun matches(exportedXml: String, cmd: LaunchCommand, intervalMinutes: Int): Boolean =
+            tag(exportedXml, "Command")?.trim('"').equals(cmd.program, ignoreCase = true) &&
+                tag(exportedXml, "Arguments") == cmd.arguments.joinToString(" ") { arg(it) } &&
+                tag(exportedXml, "Interval") == "PT${intervalMinutes.coerceIn(1, 60)}M"
 
         private fun esc(s: String) = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;")
         private fun arg(a: String) = if (a.isEmpty() || a.any { it == ' ' || it == '\t' }) "\"$a\"" else a

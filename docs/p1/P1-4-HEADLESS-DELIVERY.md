@@ -28,3 +28,23 @@
 
 ## 待 Windows 真机验收
 规格第七节 8 条，其中第 3 条（建 2 分钟后的任务 → 关应用 → 出现 headless 记录）和第 6 条（不出窗口、不抢焦点）必须在真机上看。
+
+## 启动对账（验收后补充）
+
+应用（有窗口的实例）每次启动在后台做一次 `schtasks /Query /XML` 对账，**不改设置本身**：
+
+| 设置 | Windows 侧 | 动作 |
+|---|---|---|
+| 开 | 存在且 Command/Arguments/Interval 与当前一致 | 不动 |
+| 开 | 不存在（被清理工具/更新删掉） | 重新注册 |
+| 开 | 指向旧路径 / 间隔不同 / 导出无法解析 | `/Create /F` 覆盖 |
+| 开 | 当前副本无法被 Windows 启动（开发 classes 目录） | 不动，记日志 |
+| 开 | 注册被拒 | 只试一次，日志 + toast（三语 `headless.repair_failed`） |
+| 关 | 存在 | 删除 |
+| 关 | 不存在 | 不动 |
+
+锁：除了模拟“残留文本但无 OS 锁”的用例，新增真实跨进程用例——子 JVM 取锁后被 `destroyForcibly` 杀掉（不释放、不清理），下一个持有者识别为过期锁并接管，`staleFrom` 记录被杀进程的 pid。
+
+## 修复：headless 退出前等待未完成的写盘
+
+AppState 的会话/记录写盘是挂在 scope 上的异步 IO 任务；headless 结束时直接 `scope.cancel()` 可能把尚未执行的写盘取消，出现「运行记录 ok、会话文件里没有回复」。新增端到端用例后顺序变化暴露了这个竞态。`HeadlessRunner` 现在在 cancel 之前 drain scope 子任务（上限 10 s，超时记日志）。HeadlessSchedulerTest 连跑 5 次全绿。

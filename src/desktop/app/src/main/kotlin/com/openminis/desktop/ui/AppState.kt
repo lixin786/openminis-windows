@@ -429,6 +429,22 @@ class AppState(
         }
     }
 
+    /** Startup: make the Windows task match the setting (it can vanish or go stale behind our back). */
+    private fun reconcileHeadless() {
+        if (!com.openminis.desktop.core.AppPaths.isWindows) return
+        scope.launch(Dispatchers.IO) {
+            val iv = settings.headlessIntervalMinutes.takeIf { it in com.openminis.desktop.scheduled.SystemTask.INTERVALS } ?: 5
+            val r = runCatching {
+                systemTask.reconcile(settings.headlessScheduler, iv, if (settings.headlessScheduler) com.openminis.desktop.scheduled.LaunchCommand.resolve() else null)
+            }.getOrElse { com.openminis.desktop.scheduled.SystemTask.Reconcile(com.openminis.desktop.scheduled.SystemTask.Reconciled.FAILED, it.message) }
+            val log = "startup reconcile (setting=${settings.headlessScheduler}): ${r.action}${r.error?.let { " — $it" } ?: ""}"
+            if (r.action == com.openminis.desktop.scheduled.SystemTask.Reconciled.FAILED) com.openminis.app.logging.AppLogger.warning("Scheduled", log)
+            else com.openminis.app.logging.AppLogger.info("Scheduled", log)
+            if (r.action == com.openminis.desktop.scheduled.SystemTask.Reconciled.FAILED && settings.headlessScheduler)
+                withContext(Dispatchers.Main) { toast = tr("headless.repair_failed", r.error ?: "?") }
+        }
+    }
+
     /** Settings toggle: register (idempotent) or remove the Windows task; the setting changes only on success. */
     fun applyHeadless(enabled: Boolean, interval: Int, done: (error: String?) -> Unit) {
         scope.launch(Dispatchers.IO) {
@@ -499,6 +515,7 @@ class AppState(
             scheduler.gate = ::schedulerGate
             scheduler.heartbeat = ::schedulerHeartbeat
             scheduler.start()
+            reconcileHeadless()
             newChat()
             // Warm the Chinese segmenter (dictionary load ~1 s) off the UI thread.
             scope.launch(Dispatchers.IO) { runCatching { com.openminis.desktop.tools.MemoryTokenizer.tokenize("预热 warmup") } }

@@ -40,6 +40,18 @@ object HeadlessRunner {
         } finally { lock.release() }
     }
 
+    private suspend fun drain(scope: CoroutineScope, timeoutMs: Long = 10_000) {
+        val job = scope.coroutineContext[kotlinx.coroutines.Job] ?: return
+        val done = kotlinx.coroutines.withTimeoutOrNull(timeoutMs) {
+            while (true) {
+                val pending = job.children.filter { it.isActive }.toList()
+                if (pending.isEmpty()) break
+                pending.forEach { it.join() }
+            }
+        }
+        if (done == null) AppLogger.warning(TAG, "pending writes did not finish within $timeoutMs ms")
+    }
+
     private suspend fun pass(paths: AppPaths, st: HeadlessState, started: Long, clock: () -> Long) {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         val app = withContext(Dispatchers.Main) { AppState(paths, scope, headless = true) }
@@ -61,6 +73,9 @@ object HeadlessRunner {
             }
         } finally {
             runCatching { app.shutdown() }
+            // AppState writes chats / task records in fire-and-forget IO jobs on [scope]: let them land before
+            // cancelling, or the run's reply can be lost from disk although the run record says ok.
+            drain(scope)
             scope.cancel()
             com.openminis.desktop.i18n.I18n.apply(prevLang)
         }
