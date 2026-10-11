@@ -76,7 +76,7 @@ fun ScheduledTasksWindow(state: AppState, onClose: () -> Unit) {
                 @Suppress("UNUSED_VARIABLE") val tick = state.scheduledTick
                 val tasks = state.scheduler.list()
                 ScrollColumn(Modifier.weight(1f).fillMaxWidth()) {
-                    RunsOnlyWhileOpenNote()
+                    RunsOnlyWhileOpenNote(state.settings.headlessScheduler)
                     Spacer(Modifier.height(8.dp))
                     val e = editing
                     if (e != null) {
@@ -114,7 +114,9 @@ private fun TaskRow(state: AppState, t: ScheduledTask, all: List<ScheduledTask>,
                     Text(t.label.ifBlank { t.prompt.take(40) }, style = MaterialTheme.typography.titleSmall)
                     Text(describeTrigger(t) { id -> all.firstOrNull { it.id == id }?.label ?: id } + " · " +
                         (if (running) tr("sched.running_now") else tr("sched.next", fmtTime(state.scheduler.nextFire(t)))) + tr("sched.runs_count", t.firesSoFar) +
-                        " · " + (if (t.targetMode is ScheduledTargetMode.NewSession) tr("sched.target.new") else tr("sched.target.follow")),
+                        " · " + (if (t.targetMode is ScheduledTargetMode.NewSession) tr("sched.target.new") else tr("sched.target.follow")) +
+                        (t.runHistory.firstOrNull()?.let { r -> " · " + tr("sched.last_run", fmtTime(r.firedAt)) + runTags(r) +
+                            if (r.status == "needs-approval") " · ⚠ " + tr("sched.run.skipped_approval") else "" } ?: ""),
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 IconButton(onClick = { state.scheduler.runNow(t.id) }, enabled = !running) { Icon(Lucide.Play, tr("sched.run_now")) }
@@ -131,7 +133,7 @@ private fun TaskRow(state: AppState, t: ScheduledTask, all: List<ScheduledTask>,
                 if (t.runHistory.isEmpty()) Text(tr("sched.no_runs"), style = MaterialTheme.typography.bodySmall)
                 t.runHistory.take(20).forEach { r ->
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text((if (r.ok) "✓ " else "✗ ") + fmtTime(r.firedAt) + "  " + (r.preview ?: "").replace('\n', ' ').take(120),
+                        Text((if (r.ok) "✓ " else if (r.status == "needs-approval") "⚠ " else "✗ ") + fmtTime(r.firedAt) + runTags(r) + "  " + (r.preview ?: "").replace('\n', ' ').take(120),
                             style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f),
                             color = if (r.ok) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.error)
                         val sid = r.sessionId
@@ -261,12 +263,23 @@ object ScheduledEditorRules {
 /** [batch3 follow-up] Shown at the top of the task list and of the create / edit form (English text; the UI shows tr("sched.runs_only_open")). */
 const val RUNS_ONLY_WHILE_OPEN_NOTE =
     "Tasks run only while OpenMinis is open. If the app is closed at the scheduled time, that run is skipped " +
-        "(delayed / interval tasks catch up once on next launch)."
+        "(delayed / interval tasks catch up once on next launch). To run them while the app is closed, turn on " +
+        "Settings › Scheduled tasks › Run while the app is closed."
 
 @Composable
-private fun RunsOnlyWhileOpenNote() {
+private fun RunsOnlyWhileOpenNote(background: Boolean) {
+    // HEADLESS-SCHEDULER.md: the note follows the background-run switch (off = the batch3 sentence still holds).
     Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = MaterialTheme.shapes.small, modifier = Modifier.fillMaxWidth()) {
-        Text("ⓘ " + tr("sched.runs_only_open"), style = MaterialTheme.typography.bodyMedium,
+        Text("ⓘ " + tr(if (background) "sched.runs_in_background" else "sched.runs_only_open"), style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSecondaryContainer, modifier = Modifier.padding(10.dp))
+    }
+}
+
+/** HEADLESS-SCHEDULER.md §6: where a run came from and why it did not run. */
+internal fun runTags(r: com.openminis.app.scheduled.ScheduledRun): String = buildString {
+    if (r.source == "headless") append(" · ").append(tr("sched.run.headless"))
+    when (r.status) {
+        "needs-approval" -> append(" · ").append(tr("sched.run.needs_approval"))
+        "timeout" -> append(" · ").append(tr("sched.run.timeout"))
     }
 }

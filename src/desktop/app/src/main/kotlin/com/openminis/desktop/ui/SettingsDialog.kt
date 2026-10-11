@@ -319,6 +319,7 @@ fun SettingsDialog(state: AppState, onClose: () -> Unit) {
                         OutlinedButton(onClick = { state.showScheduled = true }) {
                             Icon(Lucide.CalendarClock, null, Modifier.size(16.dp)); Spacer(Modifier.width(6.dp)); Text(tr("settings.scheduled.open"))
                         }
+                        HeadlessSchedulerSection(state, draft) { draft = it }
                                 }
                                 SettingsPage.REMOTE -> RemoteSection(state, draft.remoteMcp) { draft = draft.copy(remoteMcp = it) }
                                 SettingsPage.BACKUP -> BackupSection(state, onRestored = onClose)

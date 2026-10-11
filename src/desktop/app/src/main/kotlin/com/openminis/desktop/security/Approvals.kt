@@ -71,3 +71,29 @@ object SessionShellApprovals {
     fun clear() = allowed.clear()
     fun snapshot(): Set<String> = synchronized(allowed) { allowed.toSet() }
 }
+
+/** HEADLESS-SCHEDULER.md §3: thrown into a headless run when an action needed the user's OK. */
+class NeedsApprovalCancellation(val step: String) : kotlinx.coroutines.CancellationException("needs approval: $step")
+
+/**
+ * Headless runs have nobody to ask. Every request is denied, remembered, and the run it belongs to is
+ * cancelled at once, so the model cannot work around the refusal; the run is then recorded as
+ * "needs-approval". There is no path that answers yes.
+ */
+class HeadlessApprover : com.openminis.desktop.tools.ToolApprover {
+    private val lock = Any()
+    private var current: kotlinx.coroutines.Job? = null
+    private val steps = ArrayList<String>()
+
+    fun begin(job: kotlinx.coroutines.Job) = synchronized(lock) { steps.clear(); current = job }
+    fun take(): List<String> = synchronized(lock) { val s = steps.toList(); steps.clear(); current = null; s }
+
+    override suspend fun approve(request: com.openminis.desktop.tools.ApprovalRequest): Boolean {
+        // The record says which step: the dialog's summary plus what it would have run (the command line).
+        val step = request.summary + request.detail.trim().takeIf { it.isNotEmpty() }?.let { " — " + it.replace('\n', ' ').take(200) }.orEmpty()
+        val job = synchronized(lock) { steps += step; current }
+        runCatching { AppLogger.warning("Approval", "headless run: needs approval, not run: $step") }
+        job?.cancel(NeedsApprovalCancellation(step))
+        return false
+    }
+}

@@ -68,6 +68,10 @@ data class AppSettings(
     val darkTheme: Boolean? = null,
     /** [immersive] Undecorated windows with a self-drawn title bar (IMMERSIVE-WINDOW.md); off = system title bar. */
     val immersiveWindow: Boolean = true,
+    /** HEADLESS-SCHEDULER.md: a Windows scheduled task runs due tasks while the app is closed (off by default: it changes system state). */
+    val headlessScheduler: Boolean = false,
+    /** Its wake-up interval in minutes (1 / 5 / 10 / 15). */
+    val headlessIntervalMinutes: Int = 5,
     /** Appearance (ui/Appearance): accent palette id, text size factor, UI / code font family ("" = built-in default). */
     val accent: String = "indigo",
     val fontScale: Float = 1f,

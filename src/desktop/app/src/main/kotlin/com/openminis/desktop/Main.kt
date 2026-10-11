@@ -48,8 +48,15 @@ fun main(args: Array<String>) {
     // "System" mode read the Windows proxy configuration (WinHTTP / IE settings).
     System.setProperty("java.net.useSystemProxies", "true")
     if (args.contains("--version")) { println("OpenMinis Desktop ${com.openminis.app.BuildConfig.VERSION_NAME}"); return }
+    // HEADLESS-SCHEDULER.md: started by the Windows task — no window, no focus change, run what is due, exit.
+    val headlessRun = args.contains(com.openminis.desktop.scheduled.LaunchCommand.FLAG)
+    if (headlessRun) System.setProperty("java.awt.headless", "true")
     val paths = AppPaths(AppPaths.defaultRoot())
     AppLogger.init(paths.logsDir)
+    if (headlessRun) {
+        AppLogger.info("Main", "OpenMinis Desktop headless pass (--run-due-tasks); data=${paths.root}")
+        kotlin.system.exitProcess(com.openminis.desktop.scheduled.HeadlessRunner.run(paths))
+    }
     AppLogger.info("Main", "OpenMinis Desktop starting; data=${paths.root} java=${System.getProperty("java.version")} " +
         "file.encoding=${System.getProperty("file.encoding")} native.encoding=${System.getProperty("native.encoding")} " +
         "sun.jnu.encoding=${System.getProperty("sun.jnu.encoding")} default=${java.nio.charset.Charset.defaultCharset()}")

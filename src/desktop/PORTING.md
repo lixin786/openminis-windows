@@ -131,7 +131,7 @@ Status: ✅ done · 🟡 partial · ⬜ not started — table refreshed 2026-10-
 | P1-1 | MCP stdio client (`mcp/`) | ✅ | batch2 — see *P1-1 MCP* below. MCP **client** over HTTP / OAuth: not done (`url` entries are kept, not started). Phone interop went the other way: the desktop is an MCP **server** (batch13, below). |
 | P1-2 | Sub-agents (`agent/jobs`, SubAgentDefinition) | ✅ | batch2 — see *P1-2 Sub agents* below. |
 | P1-3 | Skill import UI (GitHub / zip) + per-conversation skill override | 🟡 | Import ✅ batch3 — see *P1-3 Skills* below. Per-conversation **skill** override not done (batch9 did per-conversation **MCP** only). |
-| P1-4 | Scheduled tasks | ✅ (in-app timer) | batch3 — see *P1-4 Scheduled tasks* below. The planned `schtasks` headless launch (fire while the app is closed) is not done. |
+| P1-4 | Scheduled tasks | ✅ | batch3 in-app timer + headless runs while the app is closed (`HEADLESS-SCHEDULER.md`, `docs/p1/P1-4-HEADLESS-DELIVERY.md`; needs real-machine check) — see *P1-4 Scheduled tasks* below. |
 
 ### P2
 | # | Item | Status | Notes |
@@ -205,10 +205,10 @@ Real-Windows finding after hotfix2: two independent ~3 s killers — the local p
 
 - Model: upstream `ScheduledTask` / `PrefilledToolCall` copied verbatim (`com.openminis.app.scheduled`), stored as the same JSON rows in `%APPDATA%\OpenMinis\scheduled_tasks.json`.
 - Triggers: time of day once / daily / weekdays / chosen days with a from / until date, after a delay, every N minutes (optionally N times), when another task finishes (`{{result}}` = its answer). Targets: a new chat each time, or a follow-up in an existing chat. Per-task model (`PROVIDER/model`) and reasoning override. Run records (newest first, 50 kept) with "Open chat".
-- **Deviation from the plan:** an in-process timer (1 s tick, `DesktopScheduler`) instead of Windows Task Scheduler — tasks fire only while OpenMinis is running. **Tasks do not run while the app is not running** (应用不运行时不会执行); the Scheduled tasks window and the create / edit form show this as a permanent note (batch3 follow-up). Catch-up = upstream's: an overdue after / interval fires once at start; a time-of-day slot missed while the app was closed is skipped. "Run now" does not count toward `--count`. A fire while the same task is still running is skipped.
+- **Timer:** an in-process timer (1 s tick, `DesktopScheduler`) runs tasks while OpenMinis is open. **While the app is closed**, tasks run only when *Settings › Scheduled tasks › Run while the app is closed* is on (off by default): one Windows scheduled task (`OpenMinis\Scheduled tasks`, interactive-only, no admin) starts the app with `--run-due-tasks` every 1/5/10/15 min; it runs what is due headless and exits (HEADLESS-SCHEDULER.md). The two never fire together (`run-due-tasks.lock`). With the switch off, the old rule holds and the Scheduled tasks window says so. Catch-up = upstream's: an overdue after / interval fires once at start; a time-of-day slot missed while the app was closed is skipped — unless background runs are on, where a slot up to 30 min old (persisted `checkedUpTo` + `lastFiredAt`) still runs. "Run now" does not count toward `--count`. A fire while the same task is still running is skipped.
 - A run writes into its chat like a normal turn (live reply visible when that chat is open, "Stop" in the chat); the user's own send in that chat waits. Its shell / file / MCP approvals use the normal dialog, labelled `Scheduled task «label»: …`.
 - Agent tool `scheduled_task` = upstream `minis-scheduled` (list / create / delete / enable / disable / run, same option names). Desktop safety addition: every *create* asks the user. Not offered to sub agents or inside scheduled runs.
-- Not yet: `rerun` / `child-of-current` targets, prefilled tool calls (`--command` / `--tool`; the field round-trips), completion notifications, firing while the app is closed.
+- Not yet: `rerun` / `child-of-current` targets, prefilled tool calls (`--command` / `--tool`; the field round-trips), completion notifications.
 
 ## batch3 follow-up (small screens)
 

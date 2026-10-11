@@ -17,12 +17,18 @@ data class ScheduledRun(
     val sessionId: String?,
     val preview: String?,
     val ok: Boolean,
+    /** Desktop (HEADLESS-SCHEDULER.md): "headless" when run while the app was closed; null = in the app. */
+    val source: String? = null,
+    /** Desktop: "needs-approval" (an action needed the user's OK, nothing was run) or "timeout"; null = normal. */
+    val status: String? = null,
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
         put("firedAt", firedAt)
         if (sessionId != null) put("sessionId", sessionId)
         if (preview != null) put("preview", preview)
         put("ok", ok)
+        if (source != null) put("source", source)
+        if (status != null) put("status", status)
     }
 
     companion object {
@@ -31,6 +37,8 @@ data class ScheduledRun(
             sessionId = if (o.has("sessionId")) o.optString("sessionId", null) else null,
             preview = if (o.has("preview")) o.optString("preview", null) else null,
             ok = o.optBoolean("ok", true),
+            source = if (o.has("source")) o.optString("source", null) else null,
+            status = if (o.has("status")) o.optString("status", null) else null,
         )
     }
 }

@@ -16,10 +16,11 @@
 | batch1（P0） | 上下文压缩、图片/附件输入、模型回退链、中英文分词记忆检索 |
 | hotfix1 | 修复 UTF-8 解码乱码（中文 Windows 上按 GBK 解流式响应）、窗口尺寸超出屏幕、新增网络代理设置（跟随系统 / 直连 / 手动） |
 | hotfix2 | HTTP/2 流重置：设置 → Network → HTTP protocol（Auto / HTTP/1.1 only）；Auto 下遇 `stream was reset` 按主机自动降级 HTTP/1.1 并立即重试；重置来源诊断（本地 cancel / 对端）；修连接超时输入框被钳到 3 秒；补回 gradle-wrapper.jar |
-| batch3 | P1：技能导入界面（GitHub 链接/zip/文件夹/粘贴，开关/删除）；计划任务（定时/延时/间隔/接力，新对话或续写，运行记录，agent 工具 scheduled_task；**只在应用运行时触发，应用不运行时不会执行**）；MCP 拒绝启动后对话内提示 |
+| batch3 | P1：技能导入界面（GitHub 链接/zip/文件夹/粘贴，开关/删除）；计划任务（定时/延时/间隔/接力，新对话或续写，运行记录，agent 工具 scheduled_task；默认只在应用运行时触发；后台执行见 headless 批次）；MCP 拒绝启动后对话内提示 |
 | batch2 | P1：MCP stdio 客户端（mcp_servers.json，Claude Desktop 配置可直接导入，启动前确认，工具以 mcp__服务器__工具 暴露）；子智能体（subagent_task，与上游同 schema，并发/深度上限，子任务命令仍需确认）；修复等待响应头时 Stop 卡住 |
-| batch3 补充 | 计划任务窗口与新建/编辑表单顶部常驻提示：**应用不运行时不会执行**（到点时应用未打开，这一次就跳过；延时/间隔任务在下次启动时补跑一次）。设置窗口、计划任务窗口按当前屏幕可用区域（减去边距）限制初始尺寸并居中，可调整大小，内容可滚动且有滚动条——1366×768 @125–150% 的小屏也能滚到「Skills → 导入」按钮 |
+| batch3 补充 | 计划任务窗口顶部常驻提示（后台执行关闭时：到点时应用未打开，这一次就跳过；延时/间隔任务在下次启动时补跑一次）。设置窗口、计划任务窗口按当前屏幕可用区域（减去边距）限制初始尺寸并居中，可调整大小，内容可滚动且有滚动条——1366×768 @125–150% 的小屏也能滚到「Skills → 导入」按钮 |
 | batch4 安全加固 | 见下方「安全加固」完成情况：denylist 硬拦截（POSIX + Windows，嵌套 sh -c / eval / $( ) / cmd /c / powershell -Command / -EncodedCommand 递归扫描，`${IFS}` 展开，变量目标 fail-closed）、元字符守卫、只读白名单免确认（设置项，默认开）、路径硬约束（realpath / symlink / junction / UNC / ADS / 8.3）、fail-closed、攻击回归测试 41 条、Shell 侧无任何持久放行、PROVENANCE.md；全量 520 个测试通过 |
+| headless | 计划任务无界面执行（`HEADLESS-SCHEDULER.md`）：设置 › 计划任务 ›「应用未运行时也执行计划任务」（**默认关闭**），开启后注册一个 Windows 计划任务 `OpenMinis\Scheduled tasks`（仅登录时运行，不需要管理员、不存密码），每 1/5/10/15 分钟用 `--run-due-tasks` 无窗口唤醒应用，执行到点的任务后退出。和应用内定时器用 `run-due-tasks.lock` 互斥，崩溃留下的锁会被接管。需要审批的步骤在后台**不执行**，记为 needs-approval，下次启动时提示。|
 | hotfix3 | 经代理在响应头之后被掐断流时提示「本地代理可能掐断流式连接，建议直连 / 加入绕过列表」；失败诊断（来源 LOCAL/PEER、协议、路由、耗时）写入可复制的错误文本 |
 
 已在真 Windows 11 x64 + Temurin JDK 17 上验证通过的项目：

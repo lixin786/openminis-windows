@@ -40,13 +40,18 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.async
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.withLock
 import java.io.File
 
 class PendingApproval(val request: ApprovalRequest, val answer: CompletableDeferred<Boolean>)
 
-class AppState(val paths: AppPaths, private val scope: CoroutineScope) {
+class AppState(
+    val paths: AppPaths, private val scope: CoroutineScope,
+    /** HEADLESS-SCHEDULER.md: started with --run-due-tasks — no window, approvals are refused and recorded. */
+    val headless: Boolean = false,
+) {
     private val settingsStore = SettingsStore(paths.settingsFile,
         com.openminis.desktop.secrets.SecretProtector.platform()?.let { com.openminis.desktop.secrets.SecretStore(paths.secretsFile, it) })
     private val store = ConversationStore(paths.conversationsDir)
@@ -155,7 +160,9 @@ class AppState(val paths: AppPaths, private val scope: CoroutineScope) {
      * window, a dialog error or no answer within 10 minutes = deny — main chat, sub agents and
      * scheduled runs alike.
      */
-    private val approver: ToolApprover = com.openminis.desktop.security.FailClosedApprover(
+    private val headlessApprover: com.openminis.desktop.security.HeadlessApprover? =
+        if (headless) com.openminis.desktop.security.HeadlessApprover() else null
+    private val approver: ToolApprover = headlessApprover ?: com.openminis.desktop.security.FailClosedApprover(
         ToolApprover { req ->
             approvalLock.withLock {
                 val d = CompletableDeferred<Boolean>()
@@ -226,7 +233,10 @@ class AppState(val paths: AppPaths, private val scope: CoroutineScope) {
 
     fun updateMcpServers(list: List<com.openminis.desktop.mcp.McpServerConfig>) = scope.launch(Dispatchers.IO) { mcp.setServers(list) }
     fun connectMcp(sv: com.openminis.desktop.mcp.McpServerConfig) = scope.launch(Dispatchers.IO) { mcp.connect(sv) }
-    fun shutdown() { runCatching { scheduler.stop() }; runCatching { mcp.shutdown() }; runCatching { remote.shutdown() } }
+    fun shutdown() {
+        runCatching { scheduler.stop() }; runCatching { mcp.shutdown() }; runCatching { remote.shutdown() }
+        if (!headless && schedulerLock.held) { runCatching { headlessState.update { it.copy(checkedUpTo = System.currentTimeMillis()) } }; schedulerLock.release() }
+    }
 
     // ------------------------------------------------------------ scheduled tasks (P1-4)
 
@@ -293,6 +303,7 @@ class AppState(val paths: AppPaths, private val scope: CoroutineScope) {
             is com.openminis.app.scheduled.ScheduledTargetMode.AppendToSession -> target.sessionId
             else -> return com.openminis.desktop.scheduled.ScheduledOutcome(null, "This target (${target.encode().substringBefore(':')}) is not supported on desktop yet.", ok = false)
         }
+        lastScheduledConv[t.id] = convId
         // Never write into a chat while the user's own turn (or another scheduled run) is running in it.
         while (runningConversationId == convId || compactingConversationId == convId || scheduledRunning.containsKey(convId)) kotlinx.coroutines.delay(500)
         val ok = withContext(Dispatchers.Main) {
@@ -344,6 +355,99 @@ class AppState(val paths: AppPaths, private val scope: CoroutineScope) {
         return com.openminis.desktop.scheduled.ScheduledOutcome(convId, err?.let { "Error: $it" } ?: text.ifBlank { "(no reply)" }, ok = err == null, result = text)
     }
 
+    private val lastScheduledConv = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+    /**
+     * Headless fire: the same run as in the app, but the first approval request cancels it and the run is
+     * recorded as needs-approval (nothing was executed for that step; the chat keeps what came before).
+     */
+    suspend fun runScheduledHeadless(t: com.openminis.app.scheduled.ScheduledTask, prompt: String): com.openminis.desktop.scheduled.ScheduledOutcome {
+        val ha = headlessApprover ?: error("not a headless AppState")
+        lastScheduledConv.remove(t.id)
+        return kotlinx.coroutines.coroutineScope {
+            val job = async { runScheduled(t, prompt) }
+            ha.begin(job)
+            try { job.await().also { ha.take() } } catch (e: kotlinx.coroutines.CancellationException) {
+                val steps = ha.take()
+                if (steps.isEmpty()) throw e
+                com.openminis.desktop.scheduled.ScheduledOutcome(lastScheduledConv[t.id], "Needs your approval (not run): " + steps.first(), ok = false,
+                    status = com.openminis.desktop.scheduled.DesktopScheduler.STATUS_NEEDS_APPROVAL)
+            }
+        }
+    }
+
+    // ---- HEADLESS-SCHEDULER.md: lock shared with headless passes, the Windows task, notices
+    val headlessState = com.openminis.desktop.scheduled.HeadlessState(File(paths.root, com.openminis.desktop.scheduled.HeadlessState.FILE_NAME))
+    private val schedulerLock = com.openminis.desktop.scheduled.SchedulerLock(File(paths.root, com.openminis.desktop.scheduled.SchedulerLock.FILE_NAME), "app")
+    @Volatile private var lockTriedAt = 0L
+    @Volatile private var heartbeatAt = 0L
+    val systemTask = com.openminis.desktop.scheduled.SystemTask()
+    var headlessStatus by mutableStateOf<com.openminis.desktop.scheduled.SystemTask.Status?>(null)
+        private set
+
+    /** The timer fires only while this app instance holds the lock (retried every 15 s while someone else has it). */
+    private fun schedulerGate(): Boolean {
+        if (schedulerLock.held) return true
+        val now = System.currentTimeMillis()
+        if (now - lockTriedAt < 15_000) return false
+        lockTriedAt = now
+        return when (val r = schedulerLock.tryAcquire()) {
+            is com.openminis.desktop.scheduled.SchedulerLock.Result.Busy -> { com.openminis.app.logging.AppLogger.info("Scheduled", "timer waits: ${r.holder} holds the lock"); false }
+            is com.openminis.desktop.scheduled.SchedulerLock.Result.Acquired -> { onSchedulerLockGained(); true }
+        }
+    }
+
+    private fun onSchedulerLockGained() {
+        scheduler.store.reload()
+        val st = runCatching { headlessState.read() }.getOrNull()
+        val notices = runCatching { headlessState.takeNotices() }.getOrDefault(emptyList())
+        scope.launch(Dispatchers.Main) {
+            // A headless pass wrote chats while this window was open: pick them up (unless a turn is running).
+            if ((st?.lastRun?.at ?: 0L) > appStartedAt && runningConversationId == null && scheduledRunning.isEmpty()) reloadConversationsFromDisk()
+            if (notices.isNotEmpty()) toast = tr("headless.notice", notices.size, notices.joinToString(tr("list_sep")) { tr("quote", it.label.ifBlank { it.taskId }) })
+            scheduledTick++
+        }
+    }
+
+    private fun reloadConversationsFromDisk() {
+        val keep = selectedId
+        val fresh = store.loadAll()
+        conversations.clear(); conversations.addAll(fresh)
+        if (keep != null && fresh.none { it.id == keep }) newChat()
+    }
+
+    private fun schedulerHeartbeat(now: Long) {
+        if (now - heartbeatAt < 60_000) return
+        heartbeatAt = now
+        runCatching { headlessState.update { it.copy(checkedUpTo = now) } }
+    }
+
+    fun refreshHeadlessStatus() {
+        scope.launch(Dispatchers.IO) {
+            val s = if (com.openminis.desktop.core.AppPaths.isWindows) systemTask.query() else com.openminis.desktop.scheduled.SystemTask.Status(false, null, tr("headless.windows_only"))
+            withContext(Dispatchers.Main) { headlessStatus = s }
+        }
+    }
+
+    /** Settings toggle: register (idempotent) or remove the Windows task; the setting changes only on success. */
+    fun applyHeadless(enabled: Boolean, interval: Int, done: (error: String?) -> Unit) {
+        scope.launch(Dispatchers.IO) {
+            val err: String? = when {
+                !com.openminis.desktop.core.AppPaths.isWindows -> tr("headless.windows_only")
+                enabled -> com.openminis.desktop.scheduled.LaunchCommand.resolve()?.let { cmd ->
+                    systemTask.register(cmd, interval)?.let { tr("headless.register_failed", it) }
+                } ?: tr("headless.no_launcher")
+                else -> systemTask.unregister()?.let { tr("headless.unregister_failed", it) }
+            }
+            val st = if (com.openminis.desktop.core.AppPaths.isWindows) systemTask.query() else null
+            withContext(Dispatchers.Main) {
+                if (err == null) updateSettings(settings.copy(headlessScheduler = enabled, headlessIntervalMinutes = interval))
+                headlessStatus = st
+                done(err)
+            }
+        }
+    }
+
     /** Stop a running scheduled task (its chat keeps what was produced). */
     fun stopScheduled(convId: String) { scheduledTaskOfConv[convId]?.let(scheduler::cancelRun) }
     private val scheduledTaskOfConv = java.util.concurrent.ConcurrentHashMap<String, String>()
@@ -385,16 +489,20 @@ class AppState(val paths: AppPaths, private val scope: CoroutineScope) {
             ?: unreadableSecrets.takeIf { it.isNotEmpty() }?.let { u ->
                 toast = com.openminis.desktop.i18n.I18n.tr("secrets.unreadable", u.joinToString(com.openminis.desktop.i18n.I18n.tr("list_sep")) { secretLabel(it) })
             }
-        // P3-1 follow-up: move an old plain-text phone-link token into DPAPI even while the phone link is off.
-        scope.launch(Dispatchers.IO) { runCatching { remote.tokens.migrate() }; withContext(Dispatchers.Main) { remoteTick++ } }
-        if (settings.remoteMcp.enabled) scope.launch(Dispatchers.IO) { remote.apply(settings.remoteMcp) }
-        scheduler.start()
-        Runtime.getRuntime().addShutdownHook(Thread { runCatching { mcp.shutdown() }; runCatching { remote.shutdown() } })
         com.openminis.desktop.net.DesktopHttp.update(settings.network)
         conversations.addAll(store.loadAll())
-        newChat()
-        // Warm the Chinese segmenter (dictionary load ~1 s) off the UI thread.
-        scope.launch(Dispatchers.IO) { runCatching { com.openminis.desktop.tools.MemoryTokenizer.tokenize("预热 warmup") } }
+        Runtime.getRuntime().addShutdownHook(Thread { runCatching { mcp.shutdown() }; runCatching { remote.shutdown() } })
+        if (!headless) {
+            // P3-1 follow-up: move an old plain-text phone-link token into DPAPI even while the phone link is off.
+            scope.launch(Dispatchers.IO) { runCatching { remote.tokens.migrate() }; withContext(Dispatchers.Main) { remoteTick++ } }
+            if (settings.remoteMcp.enabled) scope.launch(Dispatchers.IO) { remote.apply(settings.remoteMcp) }
+            scheduler.gate = ::schedulerGate
+            scheduler.heartbeat = ::schedulerHeartbeat
+            scheduler.start()
+            newChat()
+            // Warm the Chinese segmenter (dictionary load ~1 s) off the UI thread.
+            scope.launch(Dispatchers.IO) { runCatching { com.openminis.desktop.tools.MemoryTokenizer.tokenize("预热 warmup") } }
+        }
     }
 
     val selected: Conversation? get() = conversations.firstOrNull { it.id == selectedId }

@@ -38,6 +38,8 @@ class ScheduledStore(private val file: File) {
     }
 
     fun all(): List<ScheduledTask> = synchronized(lock) { cache }
+    /** Re-read the file (another process — the headless runner — may have written it). */
+    fun reload() = synchronized(lock) { cache = load() }
     fun get(id: String): ScheduledTask? = all().firstOrNull { it.id == id }
 
     private fun write(list: List<ScheduledTask>) {
@@ -59,7 +61,14 @@ class ScheduledStore(private val file: File) {
 }
 
 /** What one fire produced (the run record). */
-data class ScheduledOutcome(val sessionId: String?, val preview: String?, val ok: Boolean, val result: String = preview.orEmpty())
+data class ScheduledOutcome(
+    val sessionId: String?, val preview: String?, val ok: Boolean, val result: String = preview.orEmpty(),
+    /** ScheduledRun.status: "needs-approval" / "timeout" / null. */
+    val status: String? = null,
+)
+
+/** What one headless pass did (HEADLESS-SCHEDULER.md §3). */
+data class DueRunSummary(val ran: Int, val ok: Int, val failed: Int, val needsApproval: List<Pair<ScheduledTask, String>>, val timedOut: Boolean)
 
 class DesktopScheduler(
     val store: ScheduledStore,
@@ -73,6 +82,13 @@ class DesktopScheduler(
     private val armed = ConcurrentHashMap<String, Long>()
     private val running = ConcurrentHashMap<String, Job>()
     @Volatile var onChange: () -> Unit = {}
+    /**
+     * HEADLESS-SCHEDULER.md §4: the timer only fires while this process holds the run-due-tasks lock
+     * (another app instance or a headless pass may hold it). Checked before every step.
+     */
+    @Volatile var gate: () -> Boolean = { true }
+    /** Called after every step that held the gate (the app persists "checked up to" from it, throttled). */
+    @Volatile var heartbeat: (Long) -> Unit = {}
     private var loop: Job? = null
 
     fun start() {
@@ -134,7 +150,9 @@ class DesktopScheduler(
 
     /** One timer step: fire every enabled task whose armed slot has come. Public for tests. */
     fun tick() {
+        if (!gate()) return
         val now = clock()
+        heartbeat(now)
         for (t in store.all()) {
             if (!t.enabled || t.triggerKind == ScheduledTriggerKind.ON_COMPLETION) { armed.remove(t.id); continue }
             val slot = armed[t.id] ?: t.nextTriggerMs(now)?.also { armed[t.id] = it }
@@ -150,8 +168,16 @@ class DesktopScheduler(
     }
 
     private fun fire(t: ScheduledTask, now: Long) {
-        // Bookkeeping first (upstream ScheduledTaskManager.afterAlarmFire / ONCE handling), so a slow run never fires twice.
-        val after = when {
+        val after = consume(t, now) ?: return
+        if (after.enabled && after.isCalendar) after.nextTriggerMs(now + 1_000)?.let { armed[t.id] = it }
+        onChange()
+        if (isRunning(t.id)) { AppLogger.warning(TAG, "task ${t.id} «${t.label}» still running — this fire is skipped"); return }
+        launchRun(after, after.prompt)
+    }
+
+    /** Bookkeeping first (upstream ScheduledTaskManager.afterAlarmFire / ONCE handling), so a slow run never fires twice. */
+    private fun consume(t: ScheduledTask, now: Long): ScheduledTask? {
+        return when {
             t.triggerKind == ScheduledTriggerKind.AFTER -> store.update(t.id) { it.copy(enabled = false, triggeredCount = 1) }
             t.triggerKind == ScheduledTriggerKind.INTERVAL -> store.update(t.id) {
                 val n = (it.triggeredCount ?: 0) + 1
@@ -159,12 +185,60 @@ class DesktopScheduler(
                 if (it.maxFires != null && n >= it.maxFires!!) next.copy(enabled = false) else next
             }
             t.repeatMode == ScheduledRepeatMode.ONCE -> store.update(t.id) { it.copy(enabled = false) }
-            else -> t
-        } ?: return
-        if (after.enabled && after.isCalendar) after.nextTriggerMs(now + 1_000)?.let { armed[t.id] = it }
-        onChange()
-        if (isRunning(t.id)) { AppLogger.warning(TAG, "task ${t.id} «${t.label}» still running — this fire is skipped"); return }
-        launchRun(after, after.prompt)
+            else -> store.get(t.id)
+        }
+    }
+
+    // ---------------------------------------------------------------- headless pass (HEADLESS-SCHEDULER.md)
+
+    /**
+     * Tasks due at [now] when nothing was checked since [checkedUpTo] (persisted, so a closed app is covered):
+     * - after / interval: their persisted anchor says so (an overdue one fires once, upstream catch-up);
+     * - calendar: a slot in (checkedUpTo, now], also after the last fire, and not older than [graceMs] — a slot
+     *   missed by a longer gap (PC off) is skipped, like upstream's missed-alarm rule.
+     */
+    fun dueTasks(checkedUpTo: Long, now: Long, graceMs: Long = CALENDAR_GRACE_MS): List<ScheduledTask> = store.all().filter { t ->
+        if (!t.enabled || t.triggerKind == ScheduledTriggerKind.ON_COMPLETION) return@filter false
+        if (t.triggerKind != ScheduledTriggerKind.CALENDAR) return@filter (t.nextTriggerMs(now) ?: Long.MAX_VALUE) <= now
+        val from = maxOf(checkedUpTo, (t.lastFiredAt ?: Long.MIN_VALUE) + 1_000, now - graceMs)
+        val slot = t.nextTriggerMs(from) ?: return@filter false
+        slot in from..now
+    }
+
+    /**
+     * One headless pass: due tasks one at a time (then their on-completion follow-ups), each recorded with
+     * source "headless". Stops at [deadline]: the task running then is recorded as "timeout", the rest wait.
+     */
+    suspend fun runDue(
+        checkedUpTo: Long, deadline: Long,
+        runner: suspend (task: ScheduledTask, prompt: String) -> ScheduledOutcome,
+    ): DueRunSummary {
+        val now = clock()
+        var ran = 0; var ok = 0; var failed = 0; var timedOut = false
+        val needs = ArrayList<Pair<ScheduledTask, String>>()
+        val queue = ArrayDeque<Pair<ScheduledTask, String>>()
+        for (t in dueTasks(checkedUpTo, now)) { val after = consume(t, now) ?: continue; queue += after to after.prompt }
+        while (queue.isNotEmpty()) {
+            val (t, prompt) = queue.removeFirst()
+            val left = deadline - clock()
+            val firedAt = clock()
+            AppLogger.info(TAG, "headless fire task=${t.id} «${t.label}» trigger=${t.triggerKind}")
+            val out = if (left <= 0) null else try {
+                kotlinx.coroutines.withTimeoutOrNull(left) { runner(t, prompt) }
+            } catch (e: CancellationException) { throw e } catch (e: Exception) {
+                AppLogger.error(TAG, "task ${t.id} failed", e); ScheduledOutcome(null, "Error: ${e.message}", ok = false)
+            }
+            val rec = out ?: ScheduledOutcome(null, "Timed out (headless run limit).", ok = false, status = STATUS_TIMEOUT)
+            markFired(t.id, rec, firedAt, SOURCE_HEADLESS)
+            ran++
+            when { rec.status == STATUS_NEEDS_APPROVAL -> needs += t to rec.preview.orEmpty(); rec.ok -> ok++; else -> failed++ }
+            if (out == null) { timedOut = true; break }
+            if (rec.status == null) store.all().filter { it.enabled && it.triggerKind == ScheduledTriggerKind.ON_COMPLETION && it.onCompletionOf == t.id }.forEach { w ->
+                store.update(w.id) { it.copy(enabled = false, triggeredCount = 1) }
+                queue += w to w.prompt.replace(ScheduledTask.RESULT_PLACEHOLDER, rec.result.take(RESULT_CHARS))
+            }
+        }
+        return DueRunSummary(ran, ok, failed, needs, timedOut)
     }
 
     private fun launchRun(t: ScheduledTask, prompt: String) {
@@ -186,8 +260,9 @@ class DesktopScheduler(
     }
 
     /** Upstream ScheduledTaskManager.markFired: newest-first run record, capped at MAX_RUN_HISTORY. */
-    private fun markFired(id: String, out: ScheduledOutcome, firedAt: Long) {
-        val run = ScheduledRun(firedAt = firedAt, sessionId = out.sessionId, preview = out.preview?.take(PREVIEW_CHARS), ok = out.ok)
+    private fun markFired(id: String, out: ScheduledOutcome, firedAt: Long, source: String? = null) {
+        val run = ScheduledRun(firedAt = firedAt, sessionId = out.sessionId, preview = out.preview?.take(PREVIEW_CHARS), ok = out.ok,
+            source = source, status = out.status)
         store.update(id) { t ->
             t.copy(lastFiredAt = firedAt, lastResultPreview = run.preview, lastResultSessionId = out.sessionId,
                 runHistory = (listOf(run) + t.runHistory).take(ScheduledTask.MAX_RUN_HISTORY), fireCount = t.firesSoFar + 1)
@@ -206,5 +281,10 @@ class DesktopScheduler(
         private const val TAG = "Scheduled"
         const val PREVIEW_CHARS = 300
         const val RESULT_CHARS = 20_000
+        const val SOURCE_HEADLESS = "headless"
+        const val STATUS_NEEDS_APPROVAL = "needs-approval"
+        const val STATUS_TIMEOUT = "timeout"
+        /** A calendar slot missed by more than this (PC off, sleep) is skipped rather than run late. */
+        const val CALENDAR_GRACE_MS = 30 * 60 * 1000L
     }
 }
