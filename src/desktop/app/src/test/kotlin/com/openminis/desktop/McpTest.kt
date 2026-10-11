@@ -102,7 +102,9 @@ class McpTest {
         assertEquals(listOf("fake"), denied.prepare().denied, "a denied launch is reported (chat shows a hint)")
         assertEquals(1, approvals.size)
         assertEquals("mcp", approvals[0].toolName)
-        assertTrue(approvals[0].summary.contains("Start MCP server «fake»"))
+        // Locale-independent: the resolved text up to and including the server name, in whatever language is active.
+        val startPrefix = com.openminis.desktop.i18n.I18n.tr("approval.mcp.start", "fake").let { it.substring(0, it.indexOf("fake") + 4) }
+        assertTrue(approvals[0].summary.contains(startPrefix), approvals[0].summary)
         assertTrue(approvals[0].detail.contains("FakeMcpServer"), "the exact command line is shown")
         assertEquals(0, launches(), "nothing started when denied")
         assertEquals("denied", denied.status("fake").state)
@@ -215,7 +217,7 @@ class McpTest {
         val m = manager(listOf(fake(confirm = true)), approvals)
         m.prepare()
         m.call("mcp__fake__echo", JSONObject().put("text", "x"))
-        assertTrue(approvals.any { it.summary.contains("Call MCP tool «echo»") })
+        assertTrue(approvals.any { it.summary == com.openminis.desktop.i18n.I18n.tr("approval.mcp.call", "echo", "fake") }, approvals.map { it.summary }.toString())
     }
 
     @Test fun schemasReachProvidersInTheirDialect() = runBlocking {

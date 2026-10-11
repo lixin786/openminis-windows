@@ -43,6 +43,8 @@ object HeadlessRunner {
     private suspend fun pass(paths: AppPaths, st: HeadlessState, started: Long, clock: () -> Long) {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         val app = withContext(Dispatchers.Main) { AppState(paths, scope, headless = true) }
+        // I18n.active is process-global: put it back afterwards (the real process exits anyway; tests share the JVM).
+        val prevLang = com.openminis.desktop.i18n.I18n.active
         try {
             if (!app.settings.headlessScheduler) {
                 AppLogger.info(TAG, "background runs are switched off in Settings — nothing to do (remove the Windows task there)")
@@ -60,6 +62,7 @@ object HeadlessRunner {
         } finally {
             runCatching { app.shutdown() }
             scope.cancel()
+            com.openminis.desktop.i18n.I18n.apply(prevLang)
         }
     }
 }

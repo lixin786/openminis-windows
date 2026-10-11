@@ -18,6 +18,21 @@ import java.util.Calendar
 import kotlin.test.*
 
 class HeadlessSchedulerTest {
+    // The end-to-end cases run the real headless path, which applies the user's language: pin English around every case.
+    private var prevLang = com.openminis.desktop.i18n.I18n.active
+    @org.junit.jupiter.api.BeforeEach fun pinEnglish() { prevLang = com.openminis.desktop.i18n.I18n.active; com.openminis.desktop.i18n.I18n.apply("en") }
+    @org.junit.jupiter.api.AfterEach fun restoreLanguage() { com.openminis.desktop.i18n.I18n.apply(prevLang) }
+
+    @Test fun headlessPassLeavesTheGlobalLanguageAlone() {
+        val server = MockWebServer(); server.start()
+        try {
+            val (root, _) = seed(server, enabled = true, language = "zh-CN")
+            server.enqueue(sse("""{"id":"1","choices":[{"index":0,"delta":{"role":"assistant","content":"hi"}}]}""",
+                """{"id":"1","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}""", "[DONE]"))
+            assertEquals(0, HeadlessRunner.run(AppPaths(root)))
+            assertEquals("en", com.openminis.desktop.i18n.I18n.active, "a headless pass must not leave the process language changed")
+        } finally { server.shutdown() }
+    }
     private class FakeExec(var answer: (List<String>) -> CommandExecutor.Result = { CommandExecutor.Result(0, "") }) : CommandExecutor {
         val calls = mutableListOf<List<String>>()
         var lastXml: String? = null
@@ -211,10 +226,10 @@ class HeadlessSchedulerTest {
 
     private fun sse(vararg events: String) = MockResponse().setHeader("Content-Type", "text/event-stream").setBody(events.joinToString("") { "data: $it\n\n" })
 
-    private fun seed(server: MockWebServer, enabled: Boolean = true): Pair<File, ScheduledTask> {
+    private fun seed(server: MockWebServer, enabled: Boolean = true, language: String = "system"): Pair<File, ScheduledTask> {
         val root = TestSupport.tmp("hl-root")
         val ws = File(root, "ws").apply { mkdirs() }
-        val s = AppSettings(activeProvider = ProviderKind.OPENAI_COMPATIBLE, workspaceDir = ws.absolutePath, headlessScheduler = enabled, confirmShellCommands = true)
+        val s = AppSettings(activeProvider = ProviderKind.OPENAI_COMPATIBLE, workspaceDir = ws.absolutePath, headlessScheduler = enabled, confirmShellCommands = true, language = language)
             .withProvider(ProviderKind.OPENAI_COMPATIBLE, ProviderSettings(apiKey = "k", baseUrl = server.url("/v1").toString().trimEnd('/'), model = "m"))
         SettingsStore(File(root, "settings.json")).save(s)
         val t = ScheduledTask(label = "Morning", timeOfDayHour = 0, timeOfDayMinute = 0, repeatMode = ScheduledRepeatMode.ONCE, prompt = "say hi",

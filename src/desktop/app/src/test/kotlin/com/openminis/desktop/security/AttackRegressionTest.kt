@@ -169,7 +169,7 @@ class AttackRegressionTest {
             asked += req; req.onAlwaysAllow?.invoke(); true
         }
         reg.execute("shell", JSONObject().put("command", "mkdir made"))
-        assertEquals(1, asked.size); assertEquals("Allow for this session", asked.single().rememberLabel)
+        assertEquals(1, asked.size); assertEquals(com.openminis.desktop.i18n.I18n.tr("approval.session"), asked.single().rememberLabel)
         reg.execute("shell", JSONObject().put("command", "mkdir made"))
         assertEquals(1, asked.size, "the exact command is remembered for this session")
         assertTrue(SessionShellApprovals.contains("mkdir made"))
