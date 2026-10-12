@@ -63,18 +63,30 @@
 
 每批照旧：串行单路、测试全绿（含小屏与窗口几何相关用例）、交付后我在真机按上面 11 条核。
 
-## 已修缺陷（2026-10-12 真机验收发现，同日修复，待真机复测）
+## 已修缺陷（2026-10-12 真机验收发现，同日修复，真机复测通过）
 
 第一批手测已补完并通过：标题栏拖拽（+150/+100 精确）、八向缩放、520dp 最小尺寸（200% 下 1040px）、双击最大化到 0,0 2560x1504 并精确还原、`window.json` 重启恢复。
 
-共性根因：原生框架下最大化有两套逻辑打架（系统缩放 vs. 应用自己 setBounds 到工作区），几何状态又从 AWT 的缓存 bounds 读取，外部改动会让这份缓存过期。修法：
-- **最大化交给系统**：`WM_GETMINMAXINFO` 把 ptMaxPosition / ptMaxSize 钉在宿主显示器的工作区（`DwmPolicy.maxRect`），标题栏按钮、双击、Win+Up、吸附后再最大化都走 `ShowWindowAsync(SW_MAXIMIZE / SW_RESTORE)`；SC_MAXIMIZE / SC_RESTORE 直接放行。不再「先取消系统缩放、再 setBounds」。
-- **去掉最大跟踪尺寸限制**：ptMaxTrackSize 设为 32000，外部 SetWindowPos 不会再被钳到「屏幕 + 边框」（2560x1600 @200% 下即 1630 高）。
-- **几何以真实窗口矩形为准**：原生框架下 `PlacementMachine.Ops` 用 GetWindowRect / SetWindowPos（异步）读写设备像素，按每台显示器的缩放比例换算（`WindowGeometry.toLogical / toPhysical`）；每次 `WM_WINDOWPOSCHANGED` 都通过 `PlacementMachine.observed(rect, zoomed, iconic)` 让状态机吸收真实矩形和缩放状态，不管变化来自应用自己、系统还是别的程序。没有原生框架时，改用 ComponentListener 吸收悬浮状态下的外部变化。
+修法：
+- **最大化交给系统**：`WM_GETMINMAXINFO` 把 ptMaxPosition / ptMaxSize 钉在宿主显示器的工作区（`DwmPolicy.maxRect`），标题栏按钮、双击、Win+Up、吸附后再最大化都走 `ShowWindowAsync(SW_MAXIMIZE / SW_RESTORE)`；SC_MAXIMIZE / SC_RESTORE 直接放行。
+- **自管尺寸上下限**：`WM_GETMINMAXINFO` 与 `WM_WINDOWPOSCHANGING` 用应用自己的上下限并钳制请求值。上限 = 虚拟屏幕尺寸 + 128，且不超过 16384；下限 = 按缩放换算的应用最小尺寸（200% 下 1520x1040）。
+- **几何以真实窗口矩形为准**：原生框架下 `PlacementMachine.Ops` 用 GetWindowRect / SetWindowPos（异步）读写设备像素，按每台显示器的缩放比例换算（`WindowGeometry.toLogical / toPhysical`）；每次 `WM_WINDOWPOSCHANGED` 都通过 `PlacementMachine.observed(rect, zoomed, iconic)` 吸收真实矩形和缩放状态。没有原生框架时，改用 ComponentListener 吸收悬浮状态下的外部变化。
+- **防御性（未对应已验证缺陷）**：`WM_WINDOWPOSCHANGING` 按来源（OURS / AWT / FOREIGN）区分尺寸变化；外部改动后 1.5 秒内 AWT 写回不同尺寸时保留外部尺寸（`DwmPolicy.sizeFor`）。日志 `Dwm: size change` 最多 8 条。
 
-1. **Win+Up 在 200% 缩放下尺寸减半**：原表现是窗口 0,0 1280x752 物理像素，退出后 `window.json` 写成 x0 y0 640x376。修后单测 `osMaximizeAt200PercentCoversTheWorkAreaAndKeepsFloating`：最大化 = 0,0 2560x1504 设备像素 = 逻辑 1280x752；`window.json` 记录悬浮尺寸加 `maximized: true`，不再写入半尺寸矩形。吸附状态下按 Win+Up / Win+Down 由系统处理（单测 `osZoomFromOutsideIsAbsorbed`）。
-2. **外部 SetWindowPos 后高度被钉在 1630**：修后单测 `externalBoundsChangesAreAbsorbed`：外部改尺寸后宽高都跟随，之后拖边、拖角都能改高度；超出屏幕高度的尺寸按请求保留。
+1. **Win+Up 在 200% 缩放下尺寸减半**（真缺陷，已修）：原表现是窗口 0,0 1280x752 物理像素，退出后 `window.json` 写成 x0 y0 640x376。修后最大化 = 0,0 2560x1504 设备像素 = 逻辑 1280x752；`window.json` 记录悬浮尺寸加 `maximized: true`。单测 `osMaximizeAt200PercentCoversTheWorkAreaAndKeepsFloating`。
+2. **外部给超范围尺寸会让应用崩溃**（真缺陷，已修）：外部 SetWindowPos 请求超大高度时，旧版先被钳到 maxTrack（当时 32000），Skiko 创建 32000 高的 D3D 表面越界崩溃（4 份同签名 hs_err）。修后由上面的自管上下限钳制：1800x65535 → 1800x1728，进程存活、无崩溃报告。
+   - **实测更正**：最初报的「外部 SetWindowPos 后高度被钉死在 1630 / 1728、之后拖边也改不动」不是缺陷——是测试脚本把高度传成了 65535，被钳到当时的 maxTrack；之后拖不动是因为窗口底边已在屏幕外，拖拽点没落在边缘上。正确传参后外部改尺寸完全按请求和上下限走。
 
-真机复测数值：待填。
+真机复测（255fd0f，2560x1600 @200%）：
+- 外部 SetWindowPos：1800x1200 → 1800x1200；1800x1300 → 1800x1300；1800x2400 → 1800x1728（钳到上限）；1200x1200 → 1520x1200（宽钳到 760dp 下限）；1800x65535 → 1800x1728，不崩、不最小化。
+- 拖下边缘 1800x1200 → 1800x1100；标题栏最大化 → 0,0 2560x1504；还原 → 精确回到原尺寸。
+- 全量测试 733/0/0/0，复测期间零崩溃报告。
+
+## 已知限制（Windows 行为，不修）
+
+- **最小尺寸挡住半屏和四分之一屏吸附**：应用最小尺寸 760x520 逻辑（200% 下 1520x1040 物理）。在 2560x1600 @200% 屏上：
+  - Win+Left / Win+Right 半屏应为 1280 宽，小于最小宽 1520，窗口被抬到 1520x1504。
+  - 吸附后再按 Win+Up / Win+Down，Windows 会尝试四分之一屏（约 640x376 逻辑），小于最小尺寸，系统拒绝执行，看起来就是没有反应。
+  - 这是 Windows 的吸附规则与应用最小尺寸的组合结果，维持现状（方案 A）。
 
 不算缺陷：拖拽落点压在标题栏文字（如「上下文 3k」）上不生效，空白处正常，属预期。
