@@ -28,6 +28,88 @@ class ImmersiveWindowTest {
     private val small = WinRect(0, 0, 910, 472)
     private val big = WinRect(910, 0, 1920, 1040)
 
+    /**
+     * A native-frame window: the OS zooms ([osMaximize]) to the work area of a 2560x1600 @200 % screen and reports
+     * every change back through [PlacementMachine.observed], like WM_WINDOWPOSCHANGED does.
+     */
+    private class OsOps(var phys: WinRect, val screen: ScreenScale, val workPhys: WinRect) : PlacementMachine.Ops {
+        var zoomed = false; var normal: WinRect = phys
+        val screens = listOf(screen)
+        override fun bounds() = WindowGeometry.toLogical(phys, screens)
+        override fun setBounds(r: WinRect) { phys = WindowGeometry.toPhysical(r, screens); normal = phys }
+        override fun workAreas() = listOf(WindowGeometry.toLogical(workPhys, screens))
+        override fun osMaximize(): Boolean { if (!zoomed) normal = phys; zoomed = true; phys = workPhys; return true }
+        override fun osRestore(): Boolean { zoomed = false; phys = normal; return true }
+        fun report(m: PlacementMachine) = m.observed(bounds(), zoomed, iconic = false)
+        /** Another program's SetWindowPos (device px). */
+        fun external(r: WinRect) { phys = r; if (!zoomed) normal = r }
+    }
+    private val hiDpi = ScreenScale(WinRect(0, 0, 1280, 800), 2.0, 2.0)
+    private val hiDpiWork = WinRect(0, 0, 2560, 1504)
+
+    // ------------------------------------------------------------- 200 % / native zoom / external geometry
+
+    @Test fun physicalAndLogicalConvertPerMonitor() {
+        val s = listOf(hiDpi, ScreenScale(WinRect(2560, 0, 1920, 1080), 1.0, 1.0))
+        assertEquals(WinRect(0, 0, 1280, 752), WindowGeometry.toLogical(hiDpiWork, s), "work area @200 % = 1280x752 logical")
+        assertEquals(hiDpiWork, WindowGeometry.toPhysical(WinRect(0, 0, 1280, 752), s))
+        assertEquals(WinRect(100, 50, 640, 400), WindowGeometry.toLogical(WinRect(200, 100, 1280, 800), s))
+        assertEquals(WinRect(2660, 10, 800, 600), WindowGeometry.toLogical(WinRect(2660, 10, 800, 600), s), "second monitor @100 %")
+        assertEquals(WinRect(2660, 10, 800, 600), WindowGeometry.toPhysical(WinRect(2660, 10, 800, 600), s))
+    }
+
+    @Test fun osMaximizeAt200PercentCoversTheWorkAreaAndKeepsFloating() {
+        val ops = OsOps(WinRect(400, 200, 2000, 1200), hiDpi, hiDpiWork)
+        val m = PlacementMachine(520, 360).also { it.ops = ops }
+        m.observed(ops.bounds(), false, false)
+        m.maximize(); ops.report(m)                      // Win+Up, the title-bar button and double-click all end here
+        assertEquals(hiDpiWork, ops.phys, "0,0 2560x1504 device px")
+        assertEquals(WinRect(0, 0, 1280, 752), ops.bounds())
+        assertTrue(m.maximized)
+        assertEquals(WindowPlacement(200, 100, 1000, 600, true), m.snapshot(), "window.json: floating size + maximized, never a halved rect")
+        m.restore(); ops.report(m)                       // Win+Down / double-click
+        assertEquals(WinRect(400, 200, 2000, 1200), ops.phys)
+        assertFalse(m.maximized)
+        assertEquals(WindowPlacement(200, 100, 1000, 600, false), m.snapshot())
+    }
+
+    @Test fun osZoomFromOutsideIsAbsorbed() {
+        // Win+Up / snap → maximize performed by the OS without going through maximize()
+        val ops = OsOps(WinRect(0, 0, 1280, 1504), hiDpi, hiDpiWork)   // snapped to the left half
+        val m = PlacementMachine(520, 360).also { it.ops = ops }
+        ops.report(m)
+        ops.osMaximize(); ops.report(m)
+        assertTrue(m.maximized)
+        m.toggleMaximize(); ops.report(m)
+        assertFalse(m.maximized, "the next toggle restores, it does not maximize twice")
+    }
+
+    @Test fun externalBoundsChangesAreAbsorbed() {
+        val ops = OsOps(WinRect(200, 100, 2000, 1200), hiDpi, hiDpiWork)
+        val m = PlacementMachine(520, 360).also { it.ops = ops }
+        ops.report(m)
+        ops.external(WinRect(300, 150, 1600, 1000)); ops.report(m)   // SetWindowPos from another program
+        assertEquals(WindowPlacement(150, 75, 800, 500, false), m.snapshot(), "width and height both followed")
+        m.beginGesture(); m.resizeBy(ResizeEdge.S, 0, -100); m.endGesture(); ops.report(m)
+        assertEquals(WinRect(150, 75, 800, 400), ops.bounds(), "edge drag still changes the height")
+        m.beginGesture(); m.resizeBy(ResizeEdge.SE, 50, 60); m.endGesture(); ops.report(m)
+        assertEquals(WinRect(150, 75, 850, 460), ops.bounds(), "and the corner drag both")
+        // taller than screen + frame (the old 1630 px clamp) is kept as asked
+        ops.external(WinRect(0, 0, 2000, 2400)); ops.report(m)
+        assertEquals(WinRect(0, 0, 1000, 1200), m.floating)
+    }
+
+    @Test fun externalChangeWhileMachineMaximizedWithoutNativeFrame() {
+        val ops = FakeOps(WinRect(100, 100, 800, 600), listOf(small))
+        val m = PlacementMachine(400, 300).also { it.ops = ops }
+        m.observedFloating(ops.bounds())
+        ops.b = WinRect(120, 90, 700, 500); m.observedFloating(ops.b)
+        m.beginGesture(); m.resizeBy(ResizeEdge.S, 0, -50); m.endGesture()
+        assertEquals(WinRect(120, 90, 700, 450), ops.b)
+        m.maximize(); assertEquals(small, ops.b)
+        m.restore(); assertEquals(WinRect(120, 90, 700, 450), ops.b)
+    }
+
     // ------------------------------------------------------------- resize math
 
     @Test fun eightEdgesResizeTheRightSides() {

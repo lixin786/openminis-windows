@@ -2,6 +2,7 @@
 package com.openminis.desktop
 
 import com.openminis.desktop.platform.DwmPolicy
+import com.openminis.desktop.core.WinRect
 import com.openminis.desktop.platform.DwmPolicy.SysCommand
 import com.openminis.desktop.platform.Win32
 import com.openminis.desktop.platform.WindowsDwm
@@ -28,13 +29,12 @@ class DwmWindowTest {
         assertEquals(0, dialog and (Win32.WS_MAXIMIZEBOX or Win32.WS_MINIMIZEBOX or Win32.WS_SYSMENU))
     }
 
-    @Test fun systemCommandsKeepMaximizeOurs() {
-        fun sc(cmd: Int, iconic: Boolean = false, ours: Boolean = false, canMax: Boolean = true) = DwmPolicy.sysCommand(cmd.toLong(), iconic, ours, canMax)
-        assertEquals(SysCommand.MAXIMIZE_OURS, sc(Win32.SC_MAXIMIZE))
-        assertEquals(SysCommand.MAXIMIZE_OURS, sc(Win32.SC_MAXIMIZE or 0x2), "low 4 bits are system use")
+    @Test fun systemCommandsLeaveZoomToTheOs() {
+        fun sc(cmd: Int, canMax: Boolean = true) = DwmPolicy.sysCommand(cmd.toLong(), canMax)
+        assertEquals(SysCommand.PASS, sc(Win32.SC_MAXIMIZE), "OS zoom, sized by WM_GETMINMAXINFO")
+        assertEquals(SysCommand.PASS, sc(Win32.SC_MAXIMIZE or 0x2), "low 4 bits are system use")
         assertEquals(SysCommand.SWALLOW, sc(Win32.SC_MAXIMIZE, canMax = false))
-        assertEquals(SysCommand.RESTORE_OURS, sc(Win32.SC_RESTORE, ours = true))
-        assertEquals(SysCommand.PASS, sc(Win32.SC_RESTORE, iconic = true, ours = true), "taskbar restore from minimized")
+        assertEquals(SysCommand.SWALLOW, sc(Win32.SC_MAXIMIZE or 0x2, canMax = false))
         assertEquals(SysCommand.PASS, sc(Win32.SC_RESTORE))
         assertEquals(SysCommand.SWALLOW, sc(Win32.SC_KEYMENU), "no native system menu next to the app's own")
         assertEquals(SysCommand.PASS, sc(0xF020), "minimize")
@@ -42,8 +42,20 @@ class DwmWindowTest {
         assertEquals(SysCommand.PASS, sc(0xF010), "move")
     }
 
-    @Test fun zoomedClientIsInsetByTheFrame() {
-        assertContentEquals(intArrayOf(8, 8, 1912, 1032), DwmPolicy.zoomedClient(0, 0, 1920, 1040, 8, 8))
+    @Test fun zoomedClientIsClippedToTheWorkArea() {
+        val work = WinRect(0, 0, 2560, 1504)
+        assertContentEquals(intArrayOf(0, 0, 2560, 1504), DwmPolicy.zoomedClient(0, 0, 2560, 1504, work), "MINMAXINFO took: unchanged")
+        assertContentEquals(intArrayOf(0, 0, 2560, 1504), DwmPolicy.zoomedClient(-16, -16, 2576, 1520, work), "frame overhang cut off")
+    }
+
+    @Test fun maximizedRectIsTheWorkAreaRelativeToItsMonitor() {
+        // 2560x1600 @200 %, taskbar 96 px at the bottom (the user's screen): 0,0 2560x1504.
+        assertContentEquals(intArrayOf(0, 0, 2560, 1504), DwmPolicy.maxRect(WinRect(0, 0, 2560, 1600), WinRect(0, 0, 2560, 1504)))
+        // taskbar on top
+        assertContentEquals(intArrayOf(0, 96, 2560, 1504), DwmPolicy.maxRect(WinRect(0, 0, 2560, 1600), WinRect(0, 96, 2560, 1504)))
+        // second monitor to the right: position is relative to that monitor
+        assertContentEquals(intArrayOf(0, 0, 1920, 1040), DwmPolicy.maxRect(WinRect(2560, 0, 1920, 1080), WinRect(2560, 0, 1920, 1040)))
+        assertTrue(DwmPolicy.MAX_TRACK > 1630 * 4, "no screen + frame clamp on height or width")
     }
 
     @Test fun switchedOnOnlyOnWindowsAndCanBeTurnedOff() {
@@ -74,8 +86,8 @@ class DwmWindowTest {
             javax.swing.SwingUtilities.invokeAndWait { f.isVisible = true }
             var r: WindowsDwm.Result? = null
             val host = object : WindowsDwm.Host {
-                override val maximizedByUs = false; override val canMaximize = true
-                override fun requestMaximize() {}; override fun requestRestore() {}
+                override val canMaximize = true
+                override fun placementChanged() {}
             }
             javax.swing.SwingUtilities.invokeAndWait { r = WindowsDwm.install(f, host, maximized = false) }
             Thread.sleep(300)

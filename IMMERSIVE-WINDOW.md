@@ -63,11 +63,18 @@
 
 每批照旧：串行单路、测试全绿（含小屏与窗口几何相关用例）、交付后我在真机按上面 11 条核。
 
-## 已知缺陷（2026-10-12 真机验收记录，未修）
+## 已修缺陷（2026-10-12 真机验收发现，同日修复，待真机复测）
 
-第一批手测已补完并通过：标题栏拖拽、八向缩放、520dp 最小尺寸、双击最大化 / 还原、`window.json` 重启恢复。两条缺陷待修（用户：不急），共性是外部几何变化没被内部状态吸收：
+第一批手测已补完并通过：标题栏拖拽（+150/+100 精确）、八向缩放、520dp 最小尺寸（200% 下 1040px）、双击最大化到 0,0 2560x1504 并精确还原、`window.json` 重启恢复。
 
-1. **Win+Up 在 200% 缩放下尺寸减半**：窗口变成 0,0 1280x752 物理像素（应为工作区 2560x1504）；退出时 `window.json` 写成 x0 y0 640x376，下次按半尺寸启动。双击标题栏和标题栏按钮最大化都正确。另外已吸附状态下 Win+Up / Win+Down 无反应（Win+Left 吸附正确）。疑点：系统最大化路径把物理像素当 dp 又除了一次缩放，或 WM_GETMINMAXINFO / 最大化状态没同步到 Compose `WindowState`。
-2. **外部 SetWindowPos 改尺寸后高度被钉死在 1630**：宽度和位置跟随，高度不跟随；之后连应用自己的边缘 / 角拖拽也改不动高度（宽度正常），重启恢复。疑点：内部缓存的高度（或高度上的 min/max 约束）没从外部变化刷新。
+共性根因：原生框架下最大化有两套逻辑打架（系统缩放 vs. 应用自己 setBounds 到工作区），几何状态又从 AWT 的缓存 bounds 读取，外部改动会让这份缓存过期。修法：
+- **最大化交给系统**：`WM_GETMINMAXINFO` 把 ptMaxPosition / ptMaxSize 钉在宿主显示器的工作区（`DwmPolicy.maxRect`），标题栏按钮、双击、Win+Up、吸附后再最大化都走 `ShowWindowAsync(SW_MAXIMIZE / SW_RESTORE)`；SC_MAXIMIZE / SC_RESTORE 直接放行。不再「先取消系统缩放、再 setBounds」。
+- **去掉最大跟踪尺寸限制**：ptMaxTrackSize 设为 32000，外部 SetWindowPos 不会再被钳到「屏幕 + 边框」（2560x1600 @200% 下即 1630 高）。
+- **几何以真实窗口矩形为准**：原生框架下 `PlacementMachine.Ops` 用 GetWindowRect / SetWindowPos（异步）读写设备像素，按每台显示器的缩放比例换算（`WindowGeometry.toLogical / toPhysical`）；每次 `WM_WINDOWPOSCHANGED` 都通过 `PlacementMachine.observed(rect, zoomed, iconic)` 让状态机吸收真实矩形和缩放状态，不管变化来自应用自己、系统还是别的程序。没有原生框架时，改用 ComponentListener 吸收悬浮状态下的外部变化。
+
+1. **Win+Up 在 200% 缩放下尺寸减半**：原表现是窗口 0,0 1280x752 物理像素，退出后 `window.json` 写成 x0 y0 640x376。修后单测 `osMaximizeAt200PercentCoversTheWorkAreaAndKeepsFloating`：最大化 = 0,0 2560x1504 设备像素 = 逻辑 1280x752；`window.json` 记录悬浮尺寸加 `maximized: true`，不再写入半尺寸矩形。吸附状态下按 Win+Up / Win+Down 由系统处理（单测 `osZoomFromOutsideIsAbsorbed`）。
+2. **外部 SetWindowPos 后高度被钉在 1630**：修后单测 `externalBoundsChangesAreAbsorbed`：外部改尺寸后宽高都跟随，之后拖边、拖角都能改高度；超出屏幕高度的尺寸按请求保留。
+
+真机复测数值：待填。
 
 不算缺陷：拖拽落点压在标题栏文字（如「上下文 3k」）上不生效，空白处正常，属预期。

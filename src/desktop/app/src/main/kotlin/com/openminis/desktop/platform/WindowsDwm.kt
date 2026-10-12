@@ -25,10 +25,9 @@ object WindowsDwm {
 
     /** Callbacks from the subclassed window procedure (run on the AWT toolkit thread → hop to the EDT). */
     interface Host {
-        val maximizedByUs: Boolean
         val canMaximize: Boolean
-        fun requestMaximize()
-        fun requestRestore()
+        /** The window's position, size or zoom changed (ours, the OS's, or another program's). Called on the EDT. */
+        fun placementChanged()
     }
 
     @Suppress("FunctionName")
@@ -48,6 +47,8 @@ object WindowsDwm {
         fun IsIconic(hwnd: HWND): Boolean
         fun IsZoomed(hwnd: HWND): Boolean
         fun GetSystemMetrics(index: Int): Int
+        fun GetWindowRect(hwnd: HWND, rect: com.sun.jna.platform.win32.WinDef.RECT): Boolean
+        fun ShowWindowAsync(hwnd: HWND, cmd: Int): Boolean
     }
 
     @Structure.FieldOrder("cxLeftWidth", "cxRightWidth", "cyTopHeight", "cyBottomHeight")
@@ -64,7 +65,10 @@ object WindowsDwm {
     private val user by lazy { Native.load("user32", User::class.java) }
 
     /** Keeps each window's callback reachable (a collected JNA callback = crash) and its previous procedure. */
-    private class Hook(val proc: WndProc, val prev: Pointer?, val host: Host)
+    private class Hook(val proc: WndProc, val prev: Pointer?, val host: Host) {
+        /** Coalesces WM_WINDOWPOSCHANGED bursts (a drag sends dozens) into one EDT callback. */
+        val pending = java.util.concurrent.atomic.AtomicBoolean(false)
+    }
     private val hooks = ConcurrentHashMap<Pointer, Hook>()
 
     private fun hwnd(w: java.awt.Window): HWND? =
@@ -97,6 +101,58 @@ object WindowsDwm {
         }
     }
 
+    /**
+     * [PlacementMachine.Ops] on the real window rect (GetWindowRect / SetWindowPos in device pixels, converted with
+     * each monitor's scale), so AWT's cached bounds can never go stale under us. null = no native frame on [w].
+     */
+    fun nativeOps(w: java.awt.Window): com.openminis.desktop.core.PlacementMachine.Ops? {
+        val h = hwnd(w) ?: return null
+        if (!hooks.containsKey(h.pointer)) return null
+        return NativeOps(w, h)
+    }
+
+    private class NativeOps(private val w: java.awt.Window, private val h: HWND) : com.openminis.desktop.core.PlacementMachine.Ops {
+        private val fallback = com.openminis.desktop.ui.AwtWindowOps(w)
+        private fun screens() = screenScales()
+        override fun bounds(): com.openminis.desktop.core.WinRect = runCatching {
+            val r = com.sun.jna.platform.win32.WinDef.RECT()
+            if (!user.GetWindowRect(h, r)) error("GetWindowRect")
+            com.openminis.desktop.core.WindowGeometry.toLogical(
+                com.openminis.desktop.core.WinRect(r.left, r.top, r.right - r.left, r.bottom - r.top), screens())
+        }.getOrElse { fallback.bounds() }
+        override fun setBounds(r: com.openminis.desktop.core.WinRect) {
+            val p = com.openminis.desktop.core.WindowGeometry.toPhysical(r, screens())
+            // Async: posted to the window's (toolkit) thread, so the EDT never blocks on it.
+            if (!runCatching { user.SetWindowPos(h, null, p.x, p.y, p.width, p.height,
+                    Win32.SWP_NOZORDER or Win32.SWP_NOACTIVATE or Win32.SWP_ASYNCWINDOWPOS) }.getOrDefault(false)) fallback.setBounds(r)
+        }
+        override fun workAreas() = fallback.workAreas()
+        override fun minimized() = runCatching { user.IsIconic(h) }.getOrElse { fallback.minimized() }
+        override fun osMaximize() = runCatching { user.ShowWindowAsync(h, Win32.SW_MAXIMIZE); true }.getOrDefault(false)
+        override fun osRestore() = runCatching { user.ShowWindowAsync(h, Win32.SW_RESTORE); true }.getOrDefault(false)
+    }
+
+    /** Whether the OS has [w] zoomed / iconic right now (native frame only). */
+    fun zoomed(w: java.awt.Window): Boolean = hwnd(w)?.let { runCatching { user.IsZoomed(it) }.getOrNull() } ?: false
+    fun iconic(w: java.awt.Window): Boolean = hwnd(w)?.let { runCatching { user.IsIconic(it) }.getOrNull() } ?: false
+
+    private fun screenScales(): List<com.openminis.desktop.core.ScreenScale> = runCatching {
+        java.awt.GraphicsEnvironment.getLocalGraphicsEnvironment().screenDevices.map { d ->
+            val gc = d.defaultConfiguration; val t = gc.defaultTransform
+            com.openminis.desktop.core.ScreenScale(com.openminis.desktop.core.WinRect.of(gc.bounds), t.scaleX, t.scaleY)
+        }
+    }.getOrDefault(emptyList())
+
+    /** Monitor and work area (device px) of the monitor nearest to [hwnd]. */
+    private fun monitorOf(hwnd: HWND): Pair<com.openminis.desktop.core.WinRect, com.openminis.desktop.core.WinRect>? = runCatching {
+        val u = com.sun.jna.platform.win32.User32.INSTANCE
+        val mon = u.MonitorFromWindow(hwnd, com.sun.jna.platform.win32.WinUser.MONITOR_DEFAULTTONEAREST)
+        val mi = com.sun.jna.platform.win32.WinUser.MONITORINFO()
+        if (!u.GetMonitorInfo(mon, mi).booleanValue()) return null
+        fun rr(r: com.sun.jna.platform.win32.WinDef.RECT) = com.openminis.desktop.core.WinRect(r.left, r.top, r.right - r.left, r.bottom - r.top)
+        rr(mi.rcMonitor) to rr(mi.rcWork)
+    }.getOrNull()
+
     /** Corners + shadow margins for the floating / maximized state. Returns whether rounding was accepted (Win11). */
     fun setMaximized(w: java.awt.Window, maximized: Boolean): Boolean = try {
         val h = hwnd(w)
@@ -112,29 +168,40 @@ object WindowsDwm {
         try {
             when (msg) {
                 Win32.WM_NCCALCSIZE -> if (wParam.toLong() != 0L) {
-                    // Client = whole window. While the OS has it zoomed (before we take it over), inset by the frame.
-                    if (user.IsZoomed(hwnd)) {
+                    // Client = whole window. Zoomed: clipped to the work area (a no-op when MINMAXINFO took).
+                    if (user.IsZoomed(hwnd)) monitorOf(hwnd)?.let { (_, work) ->
                         val p = Pointer(lParam.toLong())
-                        val fx = user.GetSystemMetrics(Win32.SM_CXFRAME) + user.GetSystemMetrics(Win32.SM_CXPADDEDBORDER)
-                        val fy = user.GetSystemMetrics(Win32.SM_CYFRAME) + user.GetSystemMetrics(Win32.SM_CXPADDEDBORDER)
-                        val r = DwmPolicy.zoomedClient(p.getInt(0), p.getInt(4), p.getInt(8), p.getInt(12), fx, fy)
+                        val r = DwmPolicy.zoomedClient(p.getInt(0), p.getInt(4), p.getInt(8), p.getInt(12), work)
                         r.forEachIndexed { i, v -> p.setInt(i * 4L, v) }
                     }
                     return LRESULT(0L)
+                }
+                Win32.WM_GETMINMAXINFO -> {
+                    // AWT fills the minimum track size from Window.minimumSize; then: maximized rect = work area,
+                    // and no max track clamp (the default is screen + frame, e.g. 1630 px high at 2560x1600 @200 %).
+                    val res = user.CallWindowProcW(hook.prev, hwnd, msg, wParam, lParam)
+                    val p = Pointer(lParam.toLong()) // POINT ptReserved, ptMaxSize, ptMaxPosition, ptMinTrackSize, ptMaxTrackSize
+                    if (hook.host.canMaximize) monitorOf(hwnd)?.let { (mon, work) ->
+                        val m = DwmPolicy.maxRect(mon, work)
+                        p.setInt(16, m[0]); p.setInt(20, m[1]); p.setInt(8, m[2]); p.setInt(12, m[3])
+                    }
+                    p.setInt(32, DwmPolicy.MAX_TRACK); p.setInt(36, DwmPolicy.MAX_TRACK)
+                    return res
                 }
                 Win32.WM_NCACTIVATE -> {
                     // Let AWT see activation, but never let DefWindowProc paint a caption: lParam -1 = no repaint.
                     return user.CallWindowProcW(hook.prev, hwnd, msg, wParam, LPARAM(-1L))
                 }
-                Win32.WM_SYSCOMMAND -> when (DwmPolicy.sysCommand(wParam.toLong(), user.IsIconic(hwnd), hook.host.maximizedByUs, hook.host.canMaximize)) {
-                    DwmPolicy.SysCommand.MAXIMIZE_OURS -> { javax.swing.SwingUtilities.invokeLater { hook.host.requestMaximize() }; return LRESULT(0L) }
-                    DwmPolicy.SysCommand.RESTORE_OURS -> { javax.swing.SwingUtilities.invokeLater { hook.host.requestRestore() }; return LRESULT(0L) }
+                Win32.WM_SYSCOMMAND -> when (DwmPolicy.sysCommand(wParam.toLong(), hook.host.canMaximize)) {
                     DwmPolicy.SysCommand.SWALLOW -> return LRESULT(0L)
                     DwmPolicy.SysCommand.PASS -> {}
                 }
-                Win32.WM_SIZE -> if (wParam.toInt() == Win32.SIZE_MAXIMIZED && hook.host.canMaximize) {
-                    // An OS maximize (Win+↑) would cover the taskbar edge and bypass PlacementMachine: hand it to ours.
-                    javax.swing.SwingUtilities.invokeLater { hook.host.requestMaximize() }
+                Win32.WM_WINDOWPOSCHANGED -> {
+                    val res = user.CallWindowProcW(hook.prev, hwnd, msg, wParam, lParam) // AWT updates its own state first
+                    if (hook.pending.compareAndSet(false, true)) javax.swing.SwingUtilities.invokeLater {
+                        hook.pending.set(false); hook.host.placementChanged()
+                    }
+                    return res
                 }
                 Win32.WM_NCDESTROY -> {
                     hooks.remove(hwnd.pointer)

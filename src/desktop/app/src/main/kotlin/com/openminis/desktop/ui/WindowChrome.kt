@@ -74,14 +74,14 @@ class WindowChrome(
     }
 
     private val dwmHost = object : com.openminis.desktop.platform.WindowsDwm.Host {
-        override val maximizedByUs get() = machine.maximized
         override val canMaximize get() = this@WindowChrome.canMaximize
-        override fun requestMaximize() {
-            // An OS maximize (Win+Up) leaves the frame zoomed: un-zoom first, then maximize to the work area our way.
-            (window as? Frame)?.let { if (it.extendedState and Frame.MAXIMIZED_BOTH != 0) it.extendedState = it.extendedState and Frame.MAXIMIZED_BOTH.inv() }
-            if (!machine.maximized) maximize() else sync()
+        override fun placementChanged() {
+            // Native frame: whatever moved the window (us, Win+arrows, snapping, SetWindowPos from outside),
+            // the machine takes the real rect and zoom state.
+            val w = window ?: return; val o = machine.ops ?: return
+            machine.observed(o.bounds(), com.openminis.desktop.platform.WindowsDwm.zoomed(w), com.openminis.desktop.platform.WindowsDwm.iconic(w))
+            sync()
         }
-        override fun requestRestore() { if (machine.maximized) restore() }
     }
 
     fun maximize() { if (canMaximize) { machine.maximize(); sync() } }
@@ -103,7 +103,16 @@ class WindowChrome(
             override fun windowActivated(e: java.awt.event.WindowEvent?) { active = true }
             override fun windowDeactivated(e: java.awt.event.WindowEvent?) { active = false }
         })
-        com.openminis.desktop.platform.WindowsDwm.install(w, dwmHost, machine.maximized)?.let { r -> dwmOn = true; dwmFrame = r.rounded }
+        com.openminis.desktop.platform.WindowsDwm.install(w, dwmHost, machine.maximized)?.let { r ->
+            dwmOn = true; dwmFrame = r.rounded
+            // The OS owns zoom from here on; bounds come from the real window rect.
+            com.openminis.desktop.platform.WindowsDwm.nativeOps(w)?.let { machine.ops = it }
+        }
+        if (!dwmOn) w.addComponentListener(object : java.awt.event.ComponentAdapter() {
+            // No native frame: absorb outside moves / resizes while floating.
+            override fun componentResized(e: java.awt.event.ComponentEvent?) { if (!machine.maximized) machine.observedFloating(WinRect.of(w.bounds)) }
+            override fun componentMoved(e: java.awt.event.ComponentEvent?) { if (!machine.maximized) machine.observedFloating(WinRect.of(w.bounds)) }
+        })
         sync()
     }
 

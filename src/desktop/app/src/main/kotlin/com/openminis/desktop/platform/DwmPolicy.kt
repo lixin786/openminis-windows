@@ -16,6 +16,10 @@ object Win32 {
     const val WM_SYSCOMMAND = 0x0112
     const val WM_SIZE = 0x0005
     const val WM_NCDESTROY = 0x0082
+    const val WM_GETMINMAXINFO = 0x0024
+    const val WM_WINDOWPOSCHANGED = 0x0047
+    const val SW_MAXIMIZE = 3; const val SW_RESTORE = 9
+    const val SWP_ASYNCWINDOWPOS = 0x4000
     const val SIZE_MAXIMIZED = 2
     const val SC_MAXIMIZE = 0xF030
     const val SC_RESTORE = 0xF120
@@ -35,10 +39,13 @@ object Win32 {
  *   keeps zero insets and the batch-1 layout is unchanged). The frame is extended 1 px into the client area.
  * - **Corners**: DWMWA_WINDOW_CORNER_PREFERENCE = ROUND while floating, DONOTROUND while maximized (Win11
  *   22000+; Windows 10 rejects the attribute and keeps square corners, the shadow still works there).
- * - **Maximize stays ours** (work area, PlacementMachine): SC_MAXIMIZE and an OS maximize (Win+↑) are turned
- *   into the app's maximize; SC_RESTORE of a maximized-by-us window into the app's restore; restoring from the
- *   taskbar (iconic) passes through. SC_KEYMENU is swallowed: the frame style would otherwise bring back the
- *   native system menu on Alt+Space next to the app's own title-bar menu.
+ * - **Maximize is the OS's, sized by us**: WM_GETMINMAXINFO pins the maximized window rect to the host monitor's
+ *   work area ([maxRect]) and lifts the max track size, so a native zoom (title-bar button, double-click,
+ *   Win+Up, snap → maximize) covers exactly the work area and SetWindowPos from outside is not clamped.
+ *   SC_MAXIMIZE / SC_RESTORE pass through (dialogs swallow SC_MAXIMIZE). SC_KEYMENU is swallowed: the frame style
+ *   would otherwise bring back the native system menu on Alt+Space next to the app's own title-bar menu.
+ *   (Until 2026-10 the app un-zoomed an OS maximize and re-did it with setBounds; at 200 % that went through
+ *   AWT's normal-position bookkeeping and left a half-size window, and snapped windows ignored Win+Up / Win+Down.)
  */
 object DwmPolicy {
     /** Frame bits OR-ed into the undecorated window's style. Dialogs get no min / max / system menu. */
@@ -51,19 +58,31 @@ object DwmPolicy {
     /** DwmExtendFrameIntoClientArea margins (l, r, t, b): 1 px while floating (shadow), none while maximized. */
     fun margins(maximized: Boolean): IntArray = if (maximized) intArrayOf(0, 0, 0, 0) else intArrayOf(1, 1, 1, 1)
 
-    enum class SysCommand { PASS, MAXIMIZE_OURS, RESTORE_OURS, SWALLOW }
+    enum class SysCommand { PASS, SWALLOW }
 
-    fun sysCommand(wParam: Long, iconic: Boolean, maximizedByUs: Boolean, canMaximize: Boolean): SysCommand =
+    fun sysCommand(wParam: Long, canMaximize: Boolean): SysCommand =
         when ((wParam and 0xFFF0).toInt()) {
             Win32.SC_KEYMENU -> SysCommand.SWALLOW
-            Win32.SC_MAXIMIZE -> if (canMaximize) SysCommand.MAXIMIZE_OURS else SysCommand.SWALLOW
-            Win32.SC_RESTORE -> if (!iconic && maximizedByUs) SysCommand.RESTORE_OURS else SysCommand.PASS
+            Win32.SC_MAXIMIZE -> if (canMaximize) SysCommand.PASS else SysCommand.SWALLOW
             else -> SysCommand.PASS
         }
 
-    /** NCCALCSIZE rect while the OS has the window zoomed (transient, until it is turned into ours): inset by the frame. */
-    fun zoomedClient(l: Int, t: Int, r: Int, b: Int, frameX: Int, frameY: Int): IntArray =
-        intArrayOf(l + frameX, t + frameY, r - frameX, b - frameY)
+    /**
+     * MINMAXINFO ptMaxPosition / ptMaxSize (device px) for a window on a monitor: the work area, with the position
+     * relative to the monitor's top-left as Windows expects. Returns (x, y, width, height).
+     */
+    fun maxRect(monitor: com.openminis.desktop.core.WinRect, work: com.openminis.desktop.core.WinRect): IntArray =
+        intArrayOf(work.x - monitor.x, work.y - monitor.y, work.width, work.height)
+
+    /** ptMaxTrackSize: large enough that neither a drag nor another program's SetWindowPos is clamped to screen + frame. */
+    const val MAX_TRACK = 32_000
+
+    /**
+     * NCCALCSIZE client rect (l, t, r, b) while zoomed: the proposed rect clipped to the work area. With [maxRect] in
+     * place that changes nothing; if MINMAXINFO was not applied, the off-screen frame overhang is cut off.
+     */
+    fun zoomedClient(l: Int, t: Int, r: Int, b: Int, work: com.openminis.desktop.core.WinRect): IntArray =
+        intArrayOf(maxOf(l, work.x), maxOf(t, work.y), minOf(r, work.x + work.width), minOf(b, work.y + work.height))
 
     /** `-Dopenminis.dwm=false` turns the native layer off (the immersive switch in Settings is the user-facing fallback). */
     fun enabled(osName: String = System.getProperty("os.name").orEmpty(), flag: String? = System.getProperty("openminis.dwm")): Boolean =

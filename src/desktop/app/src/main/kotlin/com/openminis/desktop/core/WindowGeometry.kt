@@ -23,7 +23,35 @@ enum class ResizeEdge(val left: Boolean, val top: Boolean, val right: Boolean, v
     SE(false, false, true, true, java.awt.Cursor.SE_RESIZE_CURSOR),
 }
 
+/**
+ * One monitor as AWT reports it on HiDPI Windows: [logical] is `GraphicsConfiguration.bounds` (origin in device
+ * pixels, size in logical pixels) and [scaleX]/[scaleY] its default transform. Its device rectangle keeps the origin
+ * and multiplies the size.
+ */
+data class ScreenScale(val logical: WinRect, val scaleX: Double, val scaleY: Double) {
+    val device: WinRect get() = WinRect(logical.x, logical.y,
+        Math.round(logical.width * scaleX).toInt(), Math.round(logical.height * scaleY).toInt())
+}
+
 object WindowGeometry {
+    /** Device (physical) rectangle → AWT logical, on the monitor holding its centre (else the one it overlaps most). */
+    fun toLogical(phys: WinRect, screens: List<ScreenScale>): WinRect {
+        val s = hostArea(phys, screens.map { it.device })?.let { d -> screens.first { it.device == d } } ?: return phys
+        return WinRect(
+            s.logical.x + Math.round((phys.x - s.logical.x) / s.scaleX).toInt(),
+            s.logical.y + Math.round((phys.y - s.logical.y) / s.scaleY).toInt(),
+            Math.round(phys.width / s.scaleX).toInt(), Math.round(phys.height / s.scaleY).toInt())
+    }
+
+    /** AWT logical rectangle → device (physical), the inverse of [toLogical]. */
+    fun toPhysical(r: WinRect, screens: List<ScreenScale>): WinRect {
+        val s = hostArea(r, screens.map { it.logical })?.let { l -> screens.first { it.logical == l } } ?: return r
+        return WinRect(
+            s.logical.x + Math.round((r.x - s.logical.x) * s.scaleX).toInt(),
+            s.logical.y + Math.round((r.y - s.logical.y) * s.scaleY).toInt(),
+            Math.round(r.width * s.scaleX).toInt(), Math.round(r.height * s.scaleY).toInt())
+    }
+
     /**
      * New bounds while dragging [edge] by (dx, dy) from [start]. Width and height never go below
      * [minW]×[minH]; when a left/top edge hits the minimum, the opposite edge stays put (no drift).
@@ -66,6 +94,9 @@ object WindowGeometry {
  *   restoring returns exactly to it, and [snapshot] (what window.json stores) is always the floating one.
  * - In immersive mode "maximize" sets the bounds to the work area of the host monitor (the taskbar stays visible).
  * - While maximized, moves and edge resizes are ignored.
+ * - With the native frame on Windows ([Ops.osMaximize] true) the OS owns the zoom: maximize / restore are
+ *   ShowWindow calls (WM_GETMINMAXINFO pins the maximized rect to the work area), so Win+Up / Win+Down /
+ *   snapping all work, and every geometry change, ours or external, comes back through [observed].
  */
 class PlacementMachine(private val minW: Int, private val minH: Int) {
     interface Ops {
@@ -75,6 +106,10 @@ class PlacementMachine(private val minW: Int, private val minH: Int) {
         fun workAreas(): List<WinRect>
         /** Iconified: its bounds are meaningless (Windows parks it at -32000,-32000). */
         fun minimized(): Boolean = false
+        /** Native frame: zoom with the OS (ShowWindow SW_MAXIMIZE). false = not available, the machine sets the bounds. */
+        fun osMaximize(): Boolean = false
+        /** Native frame: un-zoom with the OS (back to its own normal rect). */
+        fun osRestore(): Boolean = false
     }
 
     var ops: Ops? = null
@@ -88,7 +123,8 @@ class PlacementMachine(private val minW: Int, private val minH: Int) {
 
     fun maximize() {
         val o = ops ?: return
-        if (!maximized) floating = o.bounds()
+        if (!maximized && !o.minimized()) floating = o.bounds()
+        if (o.osMaximize()) { maximized = true; return }
         val base = floating ?: o.bounds()
         val area = WindowGeometry.hostArea(base, o.workAreas()) ?: return
         maximized = true
@@ -99,6 +135,7 @@ class PlacementMachine(private val minW: Int, private val minH: Int) {
         val o = ops ?: return
         if (!maximized) return
         maximized = false
+        if (o.osRestore()) return
         floating?.let(o::setBounds)
     }
 
@@ -106,6 +143,17 @@ class PlacementMachine(private val minW: Int, private val minH: Int) {
 
     /** Decorated mode: the OS maximized/restored the window. */
     fun osPlacementChanged(isMaximized: Boolean) { maximized = isMaximized }
+
+    /**
+     * Native frame: the window's real placement after any change (ours, the OS's, or another program's
+     * SetWindowPos). Zoomed = maximized (floating kept); otherwise these bounds are the floating ones.
+     */
+    fun observed(r: WinRect, zoomed: Boolean, iconic: Boolean) {
+        if (iconic) return
+        if (zoomed) { maximized = true; return }
+        maximized = false
+        floating = r
+    }
 
     /** Decorated mode (or any external move while floating): remember the floating bounds. */
     fun observedFloating(r: WinRect) { if (!maximized) floating = r }
