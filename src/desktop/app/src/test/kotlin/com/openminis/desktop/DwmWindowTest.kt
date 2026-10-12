@@ -55,7 +55,17 @@ class DwmWindowTest {
         assertContentEquals(intArrayOf(0, 96, 2560, 1504), DwmPolicy.maxRect(WinRect(0, 0, 2560, 1600), WinRect(0, 96, 2560, 1504)))
         // second monitor to the right: position is relative to that monitor
         assertContentEquals(intArrayOf(0, 0, 1920, 1040), DwmPolicy.maxRect(WinRect(2560, 0, 1920, 1080), WinRect(2560, 0, 1920, 1040)))
-        assertTrue(DwmPolicy.MAX_TRACK > 1630 * 4, "no screen + frame clamp on height or width")
+    }
+
+    @Test fun sizeLimitsAt200PercentAndClamping() {
+        // 2560x1600 @200 %, app minimum 760x520 logical
+        val l = DwmPolicy.limits(760, 520, 2.0, 2.0, 2560, 1600)
+        assertEquals(DwmPolicy.SizeLimits(1520, 1040, 2688, 1728), l)
+        assertContentEquals(intArrayOf(1800, 1200), DwmPolicy.clampSize(1800, 1200, l), "SetWindowPos 1800x1200 lands as asked (not 1630, not 32000)")
+        assertContentEquals(intArrayOf(1800, 1728), DwmPolicy.clampSize(1800, 32000, l), "a runaway height is cut to the screen")
+        assertContentEquals(intArrayOf(1520, 1040), DwmPolicy.clampSize(100, 100, l), "the app minimum holds")
+        val huge = DwmPolicy.limits(760, 520, 1.0, 1.0, 30000, 20000)
+        assertEquals(DwmPolicy.SURFACE_MAX, huge.maxW); assertEquals(DwmPolicy.SURFACE_MAX, huge.maxH)
     }
 
     @Test fun switchedOnOnlyOnWindowsAndCanBeTurnedOff() {

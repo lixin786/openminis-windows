@@ -260,8 +260,11 @@ object DesktopHttp {
 
     private val proxyAuth = Authenticator { route: Route?, response: Response ->
         if (response.request.header("Proxy-Authorization") != null) return@Authenticator null // already tried
+        // OkHttp asks before every HTTPS tunnel with a synthetic 407 ("OkHttp-Preemptive"): no credentials = plain CONNECT
+        // through the same proxy. Not a real challenge, so nothing to log; it never falls back to a direct connection.
+        val preemptive = response.header("Proxy-Authenticate").equals("OkHttp-Preemptive", ignoreCase = true)
         val creds = proxyCredentials(route?.proxy) ?: run {
-            AppLogger.warning("Network", "proxy ${route?.proxy} requires authentication (HTTP 407) but no proxy user is configured")
+            if (!preemptive) AppLogger.warning("Network", "proxy ${route?.proxy} requires authentication (HTTP 407) but no proxy user is configured")
             return@Authenticator null
         }
         response.request.newBuilder().header("Proxy-Authorization", Credentials.basic(creds.first, creds.second)).build()

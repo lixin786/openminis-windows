@@ -18,6 +18,8 @@ object Win32 {
     const val WM_NCDESTROY = 0x0082
     const val WM_GETMINMAXINFO = 0x0024
     const val WM_WINDOWPOSCHANGED = 0x0047
+    const val WM_WINDOWPOSCHANGING = 0x0046
+    const val SM_CXVIRTUALSCREEN = 78; const val SM_CYVIRTUALSCREEN = 79
     const val SW_MAXIMIZE = 3; const val SW_RESTORE = 9
     const val SWP_ASYNCWINDOWPOS = 0x4000
     const val SIZE_MAXIMIZED = 2
@@ -41,7 +43,12 @@ object Win32 {
  *   22000+; Windows 10 rejects the attribute and keeps square corners, the shadow still works there).
  * - **Maximize is the OS's, sized by us**: WM_GETMINMAXINFO pins the maximized window rect to the host monitor's
  *   work area ([maxRect]) and lifts the max track size, so a native zoom (title-bar button, double-click,
- *   Win+Up, snap → maximize) covers exactly the work area and SetWindowPos from outside is not clamped.
+ *   Win+Up, snap → maximize) covers exactly the work area.
+ * - **Size limits are ours** ([limits] / [clampSize]): WM_GETMINMAXINFO and WM_WINDOWPOSCHANGING both apply the
+ *   app minimum (Window.minimumSize × scale) and a ceiling of the virtual screen + slack, never above the D3D
+ *   surface limit. Whatever DefWindowProc / AWT made of a requested size is replaced by the clamped request, so
+ *   another program's SetWindowPos lands as asked. (2026-10-12: a bogus track size turned SetWindowPos 1800x1200
+ *   into 1800x1630 and, with the max track at 32000, into 1800x32000 — Skiko then crashed creating the surface.)
  *   SC_MAXIMIZE / SC_RESTORE pass through (dialogs swallow SC_MAXIMIZE). SC_KEYMENU is swallowed: the frame style
  *   would otherwise bring back the native system menu on Alt+Space next to the app's own title-bar menu.
  *   (Until 2026-10 the app un-zoomed an OS maximize and re-did it with setBounds; at 200 % that went through
@@ -74,8 +81,25 @@ object DwmPolicy {
     fun maxRect(monitor: com.openminis.desktop.core.WinRect, work: com.openminis.desktop.core.WinRect): IntArray =
         intArrayOf(work.x - monitor.x, work.y - monitor.y, work.width, work.height)
 
-    /** ptMaxTrackSize: large enough that neither a drag nor another program's SetWindowPos is clamped to screen + frame. */
-    const val MAX_TRACK = 32_000
+    /** Largest window edge Skiko's Direct3D surface accepts (D3D11 max texture size). */
+    const val SURFACE_MAX = 16_384
+    /** Room above the virtual screen for frames / invisible borders. */
+    const val SLACK = 128
+
+    data class SizeLimits(val minW: Int, val minH: Int, val maxW: Int, val maxH: Int)
+
+    /** Device-px size limits: the logical minimum × scale; the virtual screen + [SLACK], capped at [SURFACE_MAX]. */
+    fun limits(minLogicalW: Int, minLogicalH: Int, scaleX: Double, scaleY: Double, virtualW: Int, virtualH: Int): SizeLimits {
+        val minW = Math.ceil(minLogicalW * scaleX).toInt().coerceIn(1, SURFACE_MAX)
+        val minH = Math.ceil(minLogicalH * scaleY).toInt().coerceIn(1, SURFACE_MAX)
+        val maxW = (virtualW + SLACK).coerceIn(minW, SURFACE_MAX)
+        val maxH = (virtualH + SLACK).coerceIn(minH, SURFACE_MAX)
+        return SizeLimits(minW, minH, maxW, maxH)
+    }
+
+    /** The size a WM_WINDOWPOSCHANGING request ends up with: the request, clamped to [l]; nothing else. */
+    fun clampSize(reqW: Int, reqH: Int, l: SizeLimits): IntArray =
+        intArrayOf(reqW.coerceIn(l.minW, l.maxW), reqH.coerceIn(l.minH, l.maxH))
 
     /**
      * NCCALCSIZE client rect (l, t, r, b) while zoomed: the proposed rect clipped to the work area. With [maxRect] in

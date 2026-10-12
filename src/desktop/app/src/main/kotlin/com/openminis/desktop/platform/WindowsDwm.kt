@@ -65,7 +65,10 @@ object WindowsDwm {
     private val user by lazy { Native.load("user32", User::class.java) }
 
     /** Keeps each window's callback reachable (a collected JNA callback = crash) and its previous procedure. */
-    private class Hook(val proc: WndProc, val prev: Pointer?, val host: Host) {
+    private class Hook(val proc: WndProc, val prev: Pointer?, val host: Host, val window: java.awt.Window) {
+        /** Diagnostics: what AWT / DefWindowProc last put in MINMAXINFO, and how many overrides were logged. */
+        @Volatile var lastTrack = ""
+        val logged = java.util.concurrent.atomic.AtomicInteger(0)
         /** Coalesces WM_WINDOWPOSCHANGED bursts (a drag sends dozens) into one EDT callback. */
         val pending = java.util.concurrent.atomic.AtomicBoolean(false)
     }
@@ -86,7 +89,7 @@ object WindowsDwm {
             }
             val prev = user.SetWindowLongPtrW(h, Win32.GWLP_WNDPROC, proc)
             if (prev == null) { AppLogger.warning("Dwm", "subclassing failed; keeping the square batch-1 frame"); return null }
-            hooks[h.pointer] = Hook(proc, prev, host)
+            hooks[h.pointer] = Hook(proc, prev, host, w)
             // 2) Frame bits → DWM draws the shadow; WM_NCCALCSIZE keeps the client area = whole window.
             val style = user.GetWindowLongW(h, Win32.GWL_STYLE)
             user.SetWindowLongW(h, Win32.GWL_STYLE, style or DwmPolicy.extraStyle(host.canMaximize))
@@ -143,6 +146,15 @@ object WindowsDwm {
         }
     }.getOrDefault(emptyList())
 
+    /** Device-px size limits of a hooked window (its AWT minimum size × its monitor scale). */
+    private fun limitsOf(hook: Hook): DwmPolicy.SizeLimits {
+        val w = hook.window
+        val min = runCatching { w.minimumSize }.getOrNull() ?: java.awt.Dimension(1, 1)
+        val t = runCatching { w.graphicsConfiguration.defaultTransform }.getOrNull()
+        return DwmPolicy.limits(min.width, min.height, t?.scaleX ?: 1.0, t?.scaleY ?: 1.0,
+            user.GetSystemMetrics(Win32.SM_CXVIRTUALSCREEN), user.GetSystemMetrics(Win32.SM_CYVIRTUALSCREEN))
+    }
+
     /** Monitor and work area (device px) of the monitor nearest to [hwnd]. */
     private fun monitorOf(hwnd: HWND): Pair<com.openminis.desktop.core.WinRect, com.openminis.desktop.core.WinRect>? = runCatching {
         val u = com.sun.jna.platform.win32.User32.INSTANCE
@@ -177,15 +189,33 @@ object WindowsDwm {
                     return LRESULT(0L)
                 }
                 Win32.WM_GETMINMAXINFO -> {
-                    // AWT fills the minimum track size from Window.minimumSize; then: maximized rect = work area,
-                    // and no max track clamp (the default is screen + frame, e.g. 1630 px high at 2560x1600 @200 %).
+                    // AWT / DefWindowProc first; then maximized rect = work area, track sizes = our limits.
                     val res = user.CallWindowProcW(hook.prev, hwnd, msg, wParam, lParam)
                     val p = Pointer(lParam.toLong()) // POINT ptReserved, ptMaxSize, ptMaxPosition, ptMinTrackSize, ptMaxTrackSize
+                    hook.lastTrack = "minTrack ${p.getInt(24)}x${p.getInt(28)} maxTrack ${p.getInt(32)}x${p.getInt(36)}"
                     if (hook.host.canMaximize) monitorOf(hwnd)?.let { (mon, work) ->
                         val m = DwmPolicy.maxRect(mon, work)
                         p.setInt(16, m[0]); p.setInt(20, m[1]); p.setInt(8, m[2]); p.setInt(12, m[3])
                     }
-                    p.setInt(32, DwmPolicy.MAX_TRACK); p.setInt(36, DwmPolicy.MAX_TRACK)
+                    val l = limitsOf(hook)
+                    p.setInt(24, l.minW); p.setInt(28, l.minH); p.setInt(32, l.maxW); p.setInt(36, l.maxH)
+                    return res
+                }
+                Win32.WM_WINDOWPOSCHANGING -> {
+                    // WINDOWPOS: hwnd, hwndInsertAfter (pointers), then int x, y, cx, cy, flags.
+                    val p = Pointer(lParam.toLong()); val o = 2 * Native.POINTER_SIZE.toLong()
+                    val flags = p.getInt(o + 16)
+                    val reqW = p.getInt(o + 8); val reqH = p.getInt(o + 12)
+                    val res = user.CallWindowProcW(hook.prev, hwnd, msg, wParam, lParam)
+                    if (flags and Win32.SWP_NOSIZE == 0 && !user.IsIconic(hwnd)) {
+                        val gotW = p.getInt(o + 8); val gotH = p.getInt(o + 12)
+                        val f = DwmPolicy.clampSize(reqW, reqH, limitsOf(hook))
+                        if (f[0] != gotW || f[1] != gotH) {
+                            p.setInt(o + 8, f[0]); p.setInt(o + 12, f[1])
+                            if (hook.logged.incrementAndGet() <= 5) AppLogger.warning("Dwm",
+                                "size request ${reqW}x$reqH became ${gotW}x$gotH in the default handling (${hook.lastTrack}); applied ${f[0]}x${f[1]}")
+                        }
+                    }
                     return res
                 }
                 Win32.WM_NCACTIVATE -> {
