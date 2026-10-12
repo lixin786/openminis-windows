@@ -97,6 +97,34 @@ object DwmPolicy {
         return SizeLimits(minW, minH, maxW, maxH)
     }
 
+    /** Who asked for a size change (WM_WINDOWPOSCHANGING). */
+    enum class SizeOrigin {
+        /** PlacementMachine via NativeOps (edge / corner drag, restore). */
+        OURS,
+        /** AWT's own reshape (the EDT is blocked in WComponentPeer.reshape / setBounds): Compose or AWT re-applying its sizes. */
+        AWT,
+        /** Anyone else: the shell (snap, Win+arrows), another program's SetWindowPos, the OS zoom. */
+        FOREIGN,
+    }
+
+    /** How long after a foreign size change an AWT re-apply of a different size is treated as stale. */
+    const val STALE_MS = 1500L
+
+    /**
+     * The size to keep for a request: a foreign change (snap, SetWindowPos from outside) wins over an AWT re-apply
+     * of a different size that follows within [STALE_MS] — that echo is AWT / Compose writing back the bounds it had
+     * cached before the foreign change. Everything else gets the request.
+     */
+    fun sizeFor(origin: SizeOrigin, reqW: Int, reqH: Int, foreign: IntArray?, sinceForeignMs: Long): IntArray =
+        if (origin == SizeOrigin.AWT && foreign != null && sinceForeignMs in 0..STALE_MS && (reqW != foreign[0] || reqH != foreign[1]))
+            intArrayOf(foreign[0], foreign[1])
+        else intArrayOf(reqW, reqH)
+
+    /** EDT stack frames that mean AWT itself is reshaping the window. */
+    fun isAwtReshape(frames: List<String>): Boolean =
+        frames.any { it.startsWith("sun.awt.windows.WComponentPeer.reshape") || it.startsWith("sun.awt.windows.WComponentPeer.setBounds") ||
+            it.startsWith("sun.awt.windows.WWindowPeer.setBounds") || it.startsWith("sun.awt.windows.WWindowPeer.reshape") }
+
     /** The size a WM_WINDOWPOSCHANGING request ends up with: the request, clamped to [l]; nothing else. */
     fun clampSize(reqW: Int, reqH: Int, l: SizeLimits): IntArray =
         intArrayOf(reqW.coerceIn(l.minW, l.maxW), reqH.coerceIn(l.minH, l.maxH))

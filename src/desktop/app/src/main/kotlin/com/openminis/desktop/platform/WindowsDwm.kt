@@ -69,6 +69,14 @@ object WindowsDwm {
         /** Diagnostics: what AWT / DefWindowProc last put in MINMAXINFO, and how many overrides were logged. */
         @Volatile var lastTrack = ""
         val logged = java.util.concurrent.atomic.AtomicInteger(0)
+        /** The EDT (install runs on it): its stack tells an AWT reshape apart from a foreign one. */
+        val edt: Thread = Thread.currentThread()
+        /** Device-px size NativeOps just asked for (so its own WM_WINDOWPOSCHANGING is recognised). */
+        val expect = java.util.concurrent.atomic.AtomicReference<IntArray?>(null)
+        /** Last foreign size change (device px) and when. */
+        @Volatile var foreign: IntArray? = null
+        @Volatile var foreignAt = 0L
+        val diag = java.util.concurrent.atomic.AtomicInteger(0)
         /** Coalesces WM_WINDOWPOSCHANGED bursts (a drag sends dozens) into one EDT callback. */
         val pending = java.util.concurrent.atomic.AtomicBoolean(false)
     }
@@ -125,6 +133,7 @@ object WindowsDwm {
         }.getOrElse { fallback.bounds() }
         override fun setBounds(r: com.openminis.desktop.core.WinRect) {
             val p = com.openminis.desktop.core.WindowGeometry.toPhysical(r, screens())
+            hooks[h.pointer]?.expect?.set(intArrayOf(p.width, p.height))
             // Async: posted to the window's (toolkit) thread, so the EDT never blocks on it.
             if (!runCatching { user.SetWindowPos(h, null, p.x, p.y, p.width, p.height,
                     Win32.SWP_NOZORDER or Win32.SWP_NOACTIVATE or Win32.SWP_ASYNCWINDOWPOS) }.getOrDefault(false)) fallback.setBounds(r)
@@ -209,7 +218,27 @@ object WindowsDwm {
                     val res = user.CallWindowProcW(hook.prev, hwnd, msg, wParam, lParam)
                     if (flags and Win32.SWP_NOSIZE == 0 && !user.IsIconic(hwnd)) {
                         val gotW = p.getInt(o + 8); val gotH = p.getInt(o + 12)
-                        val f = DwmPolicy.clampSize(reqW, reqH, limitsOf(hook))
+                        val cur = com.sun.jna.platform.win32.WinDef.RECT().also { user.GetWindowRect(hwnd, it) }
+                        val curW = cur.right - cur.left; val curH = cur.bottom - cur.top
+                        var want = intArrayOf(reqW, reqH)
+                        if (reqW != curW || reqH != curH) {
+                            val exp = hook.expect.get()
+                            val frames = if (exp != null && exp[0] == reqW && exp[1] == reqH) emptyList()
+                                else runCatching { hook.edt.stackTrace.take(40).map { "${it.className}.${it.methodName}" } }.getOrDefault(emptyList())
+                            val origin = when {
+                                exp != null && exp[0] == reqW && exp[1] == reqH -> DwmPolicy.SizeOrigin.OURS
+                                DwmPolicy.isAwtReshape(frames) -> DwmPolicy.SizeOrigin.AWT
+                                else -> DwmPolicy.SizeOrigin.FOREIGN
+                            }
+                            if (origin == DwmPolicy.SizeOrigin.OURS) hook.expect.compareAndSet(exp, null)
+                            val now = System.currentTimeMillis()
+                            want = DwmPolicy.sizeFor(origin, reqW, reqH, hook.foreign, now - hook.foreignAt)
+                            if (origin == DwmPolicy.SizeOrigin.FOREIGN) { hook.foreign = DwmPolicy.clampSize(reqW, reqH, limitsOf(hook)); hook.foreignAt = now }
+                            if (origin != DwmPolicy.SizeOrigin.OURS && hook.diag.incrementAndGet() <= 8) AppLogger.info("Dwm",
+                                "size change $origin ${curW}x$curH -> ${reqW}x$reqH (kept ${want[0]}x${want[1]}, flags=0x${Integer.toHexString(flags)})" +
+                                    if (origin == DwmPolicy.SizeOrigin.AWT) " via " + frames.filter { !it.startsWith("sun.awt.windows.WToolkit") }.take(14).joinToString(" < ") else "")
+                        }
+                        val f = DwmPolicy.clampSize(want[0], want[1], limitsOf(hook))
                         if (f[0] != gotW || f[1] != gotH) {
                             p.setInt(o + 8, f[0]); p.setInt(o + 12, f[1])
                             if (hook.logged.incrementAndGet() <= 5) AppLogger.warning("Dwm",

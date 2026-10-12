@@ -57,7 +57,19 @@ class DwmWindowTest {
         assertContentEquals(intArrayOf(0, 0, 1920, 1040), DwmPolicy.maxRect(WinRect(2560, 0, 1920, 1080), WinRect(2560, 0, 1920, 1040)))
     }
 
-    @Test fun sizeLimitsAt200PercentAndClamping() {
+    @Test fun foreignSizeWinsOverAStaleAwtEcho() {
+        val foreign = intArrayOf(1800, 1200)       // SetWindowPos(102,60,1800,1200) from outside
+        assertContentEquals(intArrayOf(1800, 1200), DwmPolicy.sizeFor(DwmPolicy.SizeOrigin.AWT, 1800, 1728, foreign, 40), "AWT writing back a cached height is undone")
+        assertContentEquals(intArrayOf(1800, 1200), DwmPolicy.sizeFor(DwmPolicy.SizeOrigin.AWT, 1800, 1200, foreign, 40))
+        assertContentEquals(intArrayOf(1700, 1100), DwmPolicy.sizeFor(DwmPolicy.SizeOrigin.AWT, 1700, 1100, foreign, DwmPolicy.STALE_MS + 1), "later AWT sizes are honoured")
+        assertContentEquals(intArrayOf(1520, 1428), DwmPolicy.sizeFor(DwmPolicy.SizeOrigin.OURS, 1520, 1428, foreign, 40), "our own drag is never overridden")
+        assertContentEquals(intArrayOf(1280, 1504), DwmPolicy.sizeFor(DwmPolicy.SizeOrigin.FOREIGN, 1280, 1504, foreign, 40), "a newer foreign change (Win+Left) wins")
+        assertContentEquals(intArrayOf(1800, 1728), DwmPolicy.sizeFor(DwmPolicy.SizeOrigin.AWT, 1800, 1728, null, 40), "no foreign change: request as is")
+        assertTrue(DwmPolicy.isAwtReshape(listOf("sun.awt.windows.WComponentPeer.reshape", "java.awt.Component.reshape", "java.awt.Window.setBounds")))
+        assertFalse(DwmPolicy.isAwtReshape(listOf("java.lang.Object.wait", "java.awt.EventQueue.getNextEvent")))
+    }
+
+        @Test fun sizeLimitsAt200PercentAndClamping() {
         // 2560x1600 @200 %, app minimum 760x520 logical
         val l = DwmPolicy.limits(760, 520, 2.0, 2.0, 2560, 1600)
         assertEquals(DwmPolicy.SizeLimits(1520, 1040, 2688, 1728), l)
