@@ -77,6 +77,8 @@ data class AppSettings(
     val fontScale: Float = 1f,
     val uiFont: String = "",
     val monoFont: String = "",
+    /** [P2-4] Render LaTeX math in chat bubbles (and ask the model for `$…$` / `$$…$$`); off = formulas shown as source. */
+    val renderMath: Boolean = true,
     /** UI language: "system" (follow Windows), "en", "zh-CN", "zh-TW" — see i18n/AppLanguage. */
     val language: String = "system",
     /**

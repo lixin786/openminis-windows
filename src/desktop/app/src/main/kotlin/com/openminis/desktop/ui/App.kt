@@ -953,6 +953,7 @@ private fun RoundView(r: Round) {
             // P2-4: LaTeX math ($…$, $$…$$, \(…\), \[…\]) via JLaTeXMath; also escapes literal $ for the GFM parser.
             com.openminis.desktop.ui.math.ChatMarkdown(
                 content = r.text, modifier = Modifier.fillMaxWidth(),
+                renderMath = LocalAppState.current?.settings?.renderMath ?: true,
                 typography = com.mikepenz.markdown.m3.markdownTypography(
                     h1 = t.headlineSmall, h2 = t.titleLarge, h3 = t.titleMedium,
                     h4 = t.titleSmall, h5 = t.titleSmall, h6 = t.titleSmall,

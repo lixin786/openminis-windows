@@ -11,6 +11,10 @@ import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 
 object SystemPrompt {
+    /** [P2-4] Matches what ui/math/MathSyntax renders; only sent while Settings › Appearance › "Render math" is on. */
+    const val MATH_HINT = "Math is rendered from LaTeX: write inline math as \$…\$ (e.g. \$a^2+b^2=c^2\$) and display math as \$\$…\$\$ on its own lines; " +
+        "\\(…\\) and \\[…\\] also work. Do not put formulas in code blocks unless the user wants the source. " +
+        "Write money as plain text (\$5, \$5–\$10); escape a literal dollar sign as \\\$ if it could be read as math."
     fun build(settings: AppSettings, memory: MemoryStore, skills: SkillLoader): String = buildString {
         appendLine("You are Minis, a capable AI agent running as the OpenMinis desktop app on the user's computer.")
         appendLine("Current time: ${ZonedDateTime.now().format(DateTimeFormatter.RFC_1123_DATE_TIME)}")
@@ -27,6 +31,7 @@ object SystemPrompt {
             appendLine("Safety rules enforced by the app: destructive commands (deleting a drive / home / system folder, formatting, shutdown …) are refused; file tools only work inside the workspace; the user approves other commands. Never try to work around a refusal.")
         }
         appendLine("Format answers in Markdown.")
+        if (settings.renderMath) appendLine(MATH_HINT)
         if (settings.memoryEnabled) {
             memory.promptContext()?.let {
                 appendLine()

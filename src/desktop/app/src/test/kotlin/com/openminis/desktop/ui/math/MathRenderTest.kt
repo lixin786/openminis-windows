@@ -46,7 +46,7 @@ class MathRenderTest {
 
     @Test fun inlineDoesNotCrossParagraphs() {
         assertEquals(emptyList(), tex("开头 \$a\n\n下一段 b\$"))
-        assertEquals(listOf("a\n b".replace("\n", " ")), tex("跨行 \$a\n b\$ 同段"))
+        assertEquals(listOf("a b"), tex("跨行 \$a\n b\$ 同段"))
     }
 
     // ---- money -----------------------------------------------------------------------------------
@@ -93,6 +93,70 @@ class MathRenderTest {
         assertTrue(prep("行内 \$\\frac{a}").formulas.isEmpty())
         // the same text once the closer has arrived
         assertEquals(listOf("\\int_0^1 x"), tex("正在输出 \$\$ \\int_0^1 x \$\$"))
+    }
+
+    // ---- block boundaries (regression: an unclosed $$ in a heading ran into the next blocks) ----------------
+
+    private val headingRepro = "## F 标题以未闭合的块定界符结尾 \$\$\n\n正常的一段文字。\n\n\$\$D = 任意公式\$\$\n\n## G 下一节\n\n- 列表项"
+
+    @Test fun unclosedDelimitersInAHeadingStayInTheHeading() {
+        val p = prep(headingRepro)
+        assertEquals(listOf(MathSyntax.Formula("D = 任意公式", true)), p.formulas)
+        assertTrue(p.markdown.startsWith("## F 标题以未闭合的块定界符结尾 \\\$\\\$\n\n正常的一段文字。\n\n${B(0)}\n\n## G 下一节\n\n- 列表项"), p.markdown)
+        // a heading closes on its own line even without a blank line after it, for $ and \( too
+        assertEquals(listOf("y"), tex("# 标题 \$\$ x\n段落 \$\$ \$y\$"))
+        assertEquals(emptyList(), tex("# 标题 \$x\n正文 y\$ 继续"))
+        assertEquals(emptyList(), tex("# 标题 \\(x\n正文\\) 继续"))
+    }
+
+    @Test fun unclosedDelimitersInAListItemStayInTheItem() {
+        assertEquals(listOf("b"), tex("- 第一项 \$\$ a\n- 第二项 \$\$b\$\$"))
+        assertEquals(emptyList(), tex("1. 第一项 \$x\n2. 第二项 y\$"))
+        assertEquals(emptyList(), tex("- 项 \$\$ a\n\n  续段 \$\$"))
+        // a deliberate multi-line display block inside an item still works, even with a line that looks like a list item
+        assertEquals(listOf("a + b"), tex("- 解：\n  \$\$\n  a\n  + b\n  \$\$\n- 下一项"))
+    }
+
+    @Test fun unclosedDelimitersInATableCellStayInTheRow() {
+        assertEquals(listOf("t"), tex("| a | \$\$ x |\n|---|---|\n| \$\$t\$\$ | z |"))
+        assertEquals(emptyList(), tex("| \$x | b |\n|---|---|\n| c | d\$ |"))
+        assertEquals(listOf("y"), tex("| \$x | \$y\$ |"))
+    }
+
+    @Test fun blockBoundariesInParagraphs() {
+        assertEquals(emptyList(), tex("段末未闭合 \$\$\n\n下一段 \$\$"))
+        assertEquals(listOf("m"), tex("段末未闭合 \$\$\n\n\$\$m\$\$"))
+        assertEquals(emptyList(), tex("段落 \$\$ a\n> 引用 \$\$"))
+        assertEquals(emptyList(), tex("段落 \$\$ a\n# 标题 \$\$"))
+    }
+
+    // ---- "Render math" off -----------------------------------------------------------------------------
+
+    @Test fun renderOffShowsFormulasAsSource() {
+        val p = MathSyntax.prepare("设 \$a_1*b\$ 与 \\(x\\)，价格 \$5\n\$\$ \\frac{1}{2} \$\$\n`\$c\$`", render = false)
+        assertTrue(p.formulas.isEmpty())
+        assertEquals("设 \\\$a\\_1\\*b\\\$ 与 \\\\\\(x\\\\\\)，价格 \\\$5\n\\\$\\\$ \\\\frac\\{1\\}\\{2\\} \\\$\\\$\n`\$c\$`", p.markdown)
+    }
+
+    // ---- step 3: system prompt + setting ---------------------------------------------------------------
+
+    @Test fun systemPromptAsksForLatexOnlyWhileRenderingIsOn() {
+        val mem = com.openminis.desktop.tools.MemoryStore(com.openminis.desktop.TestSupport.tmp("om-math-mem"))
+        val skills = com.openminis.desktop.skills.SkillLoader { emptyList() }
+        val on = com.openminis.desktop.agent.SystemPrompt.build(com.openminis.desktop.core.AppSettings(), mem, skills)
+        assertTrue(com.openminis.desktop.agent.SystemPrompt.MATH_HINT in on)
+        assertTrue("\$\$…\$\$" in on && "\$…\$" in on && "\\(…\\)" in on && "\\[…\\]" in on, on)
+        val off = com.openminis.desktop.agent.SystemPrompt.build(com.openminis.desktop.core.AppSettings(renderMath = false), mem, skills)
+        assertFalse("LaTeX" in off, off)
+    }
+
+    @Test fun renderMathDefaultsOnAndSurvivesOldSettingsFiles() {
+        val f = java.io.File(com.openminis.desktop.TestSupport.tmp("om-math-settings"), "settings.json")
+        f.writeText("{\"activeProvider\": \"OPENAI\"}") // written before the key existed
+        assertTrue(com.openminis.desktop.core.SettingsStore(f).load().renderMath)
+        val store = com.openminis.desktop.core.SettingsStore(f)
+        store.save(store.load().copy(renderMath = false))
+        assertFalse(com.openminis.desktop.core.SettingsStore(f).load().renderMath)
     }
 
     // ---- renderer ----------------------------------------------------------------------------------
@@ -161,6 +225,21 @@ class MathRenderTest {
         } finally { scene.close() }
         for (t in listOf("h_1^{a}", "p_{a}", "l_{a}", "o_{a}", "o_{block}", "q_{a}", "t_{a}", "t_{b}", "d_{a}", "after_{a}", "\\foo", "\\begin{matrix} a"))
             assertTrue(t in MathRenderer.rendered, "not rendered: $t")
+    }
+
+    @Test fun headingReproRendersOnlyTheRealFormula() {
+        val scene = compose(headingRepro)
+        try { repeat(2) { scene.render(it * 16_000_000L) } } finally { scene.close() }
+        assertTrue("D = 任意公式" in MathRenderer.rendered)
+        assertTrue(MathRenderer.rendered.none { "正常的一段文字" in it || "下一节" in it }, MathRenderer.rendered.toString())
+    }
+
+    @Test fun renderOffDrawsNoFormula() {
+        val scene = ImageComposeScene(600, 300, Density(1f)) {
+            MaterialTheme { Surface { ChatMarkdown("关闭时 \$off_{only}\$ 与 \$\$ off_{block} \$\$", markdownTypography(), renderMath = false) } }
+        }
+        try { repeat(2) { scene.render(it * 16_000_000L) } } finally { scene.close() }
+        assertTrue(MathRenderer.rendered.none { "off_" in it })
     }
 
     @OptIn(ExperimentalComposeUiApi::class)

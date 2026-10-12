@@ -385,6 +385,7 @@ fun SettingsDialog(state: AppState, onClose: () -> Unit) {
         "Inter — SIL Open Font License 1.1",
         "JetBrains Mono — SIL Open Font License 1.1",
         "multiplatform-markdown-renderer — Apache-2.0",
+        "JLaTeXMath — GPL-2.0-or-later with classpath exception",
         "OkHttp, kotlinx — Apache-2.0 · org.json — JSON License (public domain) · jieba-analysis — Apache-2.0",
     ).forEach { Text("· $it", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(vertical = 1.dp)) }
     Hint(tr("about.third_party.hint"))
@@ -399,6 +400,9 @@ fun SettingsDialog(state: AppState, onClose: () -> Unit) {
     Section(tr("appearance.section.window"))
     Toggle(tr("appearance.immersive"), d.immersiveWindow) { onChange(d.copy(immersiveWindow = it)) }
     Hint(tr("appearance.immersive_hint"))
+    Section(tr("appearance.section.content"))
+    Toggle(tr("appearance.render_math"), d.renderMath) { onChange(d.copy(renderMath = it)) }
+    Hint(tr("appearance.render_math_hint"))
     Section(tr("appearance.section.theme"))
     Field(tr("appearance.theme")) {
         Dropdown(Appearance.ThemeMode.of(d.darkTheme), Appearance.ThemeMode.entries, { tr("appearance.theme.${it.name.lowercase()}") },

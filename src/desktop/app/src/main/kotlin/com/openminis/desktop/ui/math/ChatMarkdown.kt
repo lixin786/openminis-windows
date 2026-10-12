@@ -75,11 +75,12 @@ internal val LocalMathScrollProbe = staticCompositionLocalOf<((ScrollState) -> U
  * (paragraph — which list items use too —, headings, block quote, table) are swapped for versions whose
  * inline content holds one placeholder *per formula* (the library's own inline-image slot shares a single
  * size across a paragraph). A message without math still goes through [MathSyntax.prepare], which
- * escapes literal `$` so the GFM parser cannot swallow prices.
+ * escapes literal `$` so the GFM parser cannot swallow prices. [renderMath] false (Settings › Appearance ›
+ * "Render math" off) shows every formula as its source text.
  */
 @Composable
-fun ChatMarkdown(content: String, typography: MarkdownTypography, modifier: Modifier = Modifier) {
-    val prepared = remember(content) { MathSyntax.prepare(content) }
+fun ChatMarkdown(content: String, typography: MarkdownTypography, modifier: Modifier = Modifier, renderMath: Boolean = true) {
+    val prepared = remember(content, renderMath) { MathSyntax.prepare(content, renderMath) }
     if (prepared.formulas.isEmpty()) {
         Markdown(content = prepared.markdown, modifier = modifier, typography = typography)
         return
