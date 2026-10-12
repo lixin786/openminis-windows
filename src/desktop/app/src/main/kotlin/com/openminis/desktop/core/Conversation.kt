@@ -134,6 +134,8 @@ data class Conversation(
     val titleLocked: Boolean = false,
     /** MCP servers switched off for this chat only (by name); every server enabled in Settings is on otherwise. */
     val mcpOff: List<String> = emptyList(),
+    /** Skills (folder ids) switched off for this chat only; empty = follow Settings. Disabled-in-Settings stays off. */
+    val skillsOff: List<String> = emptyList(),
 ) {
     val latestMarker: CompactMarker? get() = compactMarkers.lastOrNull()
 }

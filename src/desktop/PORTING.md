@@ -130,18 +130,18 @@ Status: ✅ done · 🟡 partial · ⬜ not started — table refreshed 2026-10-
 |---|---|---|---|
 | P1-1 | MCP stdio client (`mcp/`) | ✅ | batch2 — see *P1-1 MCP* below. MCP **client** over HTTP / OAuth: not done (`url` entries are kept, not started). Phone interop went the other way: the desktop is an MCP **server** (batch13, below). |
 | P1-2 | Sub-agents (`agent/jobs`, SubAgentDefinition) | ✅ | batch2 — see *P1-2 Sub agents* below. |
-| P1-3 | Skill import UI (GitHub / zip) + per-conversation skill override | 🟡 | Import ✅ batch3 — see *P1-3 Skills* below. Per-conversation **skill** override not done (batch9 did per-conversation **MCP** only). |
-| P1-4 | Scheduled tasks | ✅ | batch3 in-app timer + headless runs while the app is closed (`HEADLESS-SCHEDULER.md`, `docs/p1/P1-4-HEADLESS-DELIVERY.md`; needs real-machine check) — see *P1-4 Scheduled tasks* below. |
+| P1-3 | Skill import UI (GitHub / zip) + per-conversation skill override | ✅ (unit tests + code) | Import ✅ batch3 — see *P1-3 Skills* below. Per-conversation skill override (2026-10-12): toolbar "Skills a/b" panel, twin of the batch9 MCP panel; `Conversation.skillsOff` (folder ids) in the chat JSON; the system prompt lists only skills on in Settings and not off in this chat; no override = Settings exactly; a skill disabled in Settings stays off in every chat. Sub agents follow Settings. |
+| P1-4 | Scheduled tasks | ✅ verified | batch3 in-app timer + headless runs while the app is closed (`HEADLESS-SCHEDULER.md`, `docs/p1/P1-4-HEADLESS-DELIVERY.md`). Real-machine check passed (2026-10-12): due tasks run headless with the app closed — see *P1-4 Scheduled tasks* below. |
 
 ### P2
 | # | Item | Status | Notes |
 |---|---|---|---|
-| P2-1 | Built-in browser tool (JCEF or Playwright) | ⬜ | upstream is WebView-based. |
+| P2-1 | Built-in browser tool (JCEF or Playwright) | ⬜ | upstream is WebView-based. Options report with measured sizes and the security proposal: `docs/p2/P2-1-BROWSER-OPTIONS.md` (awaiting decision). |
 | P2-2 | Image / audio generation UI + vision groups | ⬜ | provider code present; `VisionGroupResolver` is a stub. |
 | P2-3 | OAuth logins (Claude Code, Codex/ChatGPT, Copilot) | ⬜ | Copilot device flow and OpenRouter PKCE look possible with public values; Claude Code / Codex need client ids & customization values that are not in the public mirror — impossible to reproduce faithfully; API keys stay the supported path. |
 | P2-4 | KaTeX math rendering | ✅ | JLaTeXMath 1.0.7 (pure Java, no WebView) in `ui/math/`: `$…$`, `\(…\)` inline (per-formula `InlineTextContent`, AboveBaseline = baseline-true), `$$…$$`, `\[…\]` block (centred, horizontal scroll + scrollbar when wide); paragraphs / lists / headings / quotes / tables; price guard, code skipped, unclosed = literal while streaming, ⚠ + source on parse errors; bitmaps at device pixels. Literal `$` is escaped for the GFM parser (it used to drop `$5 … $10` spans). A formula never crosses a block boundary (heading / table row: same line; else up to a blank line or the next block start). Settings › Appearance › "Render math" (default on): on = `SystemPrompt.MATH_HINT` asks for `$…$` / `$$…$$`; off = formulas shown as source, no hint. Spike: branch `spike/p2-4-math`. |
 | P2-5 | i18n | ✅ (3 locales) | batch5 `61a45f0` + batch6 `3ca66f1`, verified: properties tables en / zh-CN / zh-TW, Settings › Language (system / en / zh-CN / zh-TW, live switch, follows Windows by default), `I18nTest` guards same keys, placeholders, no untranslated Chinese, no hard-coded English in the UI. Only the UI is translated; text sent to the model stays English. Upstream's other 19 locales are not ported. |
-| P2-6 | Backup / restore + update check | ✅ (needs real-machine check) | one zip + system file dialog, keys off by default, pre-restore backup + typed `restore` + rename-aside rollback; About › Check for updates (GitHub Releases via proxy settings, no download). Spec `BACKUP-RESTORE.md`, delivery `docs/p2/P2-6-DELIVERY.md`. |
+| P2-6 | Backup / restore + update check | ✅ verified | Real-machine check passed (2026-10-12): backup → restore end to end, typed `restore` gate, pre-restore snapshot taken, restored data byte-for-byte identical. One zip + system file dialog, keys off by default, pre-restore backup + typed `restore` + rename-aside rollback; About › Check for updates (GitHub Releases via proxy settings, no download). Spec `BACKUP-RESTORE.md`, delivery `docs/p2/P2-6-DELIVERY.md`. |
 
 ### P3
 | # | Item | Status | Notes |

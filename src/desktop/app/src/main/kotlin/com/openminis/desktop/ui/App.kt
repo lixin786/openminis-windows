@@ -577,6 +577,7 @@ private fun TopBar(state: AppState, conv: Conversation?) {
                 modifier = Modifier.padding(end = 4.dp),
             )
         }
+        if (conv != null && state.settings.skillsEnabled && state.settings.toolsEnabled) SkillChatButton(state, conv)
         if (conv != null && state.mcp.servers.isNotEmpty()) McpChatButton(state, conv)
         IconButton(
             onClick = { state.compactNow() }, modifier = Modifier.size(34.dp),
@@ -701,6 +702,48 @@ private fun ThinkingChip(state: AppState) {
                 DropdownMenuItem(text = { Text(tr("toolbar.thinking_prefix") + label(lv)) },
                     leadingIcon = { if (lv == s.thinkingLevel) Icon(Lucide.Check, null, Modifier.size(16.dp)) else Spacer(Modifier.size(16.dp)) },
                     onClick = { open = false; state.updateSettings(s.copy(thinkingLevel = lv)) })
+            }
+        }
+    }
+}
+
+/** Toolbar "Skills a/b" + panel: switch Settings' skills on/off for this chat (P1-3, twin of the MCP panel). */
+@Composable
+private fun SkillChatButton(state: AppState, conv: Conversation) {
+    var open by remember { mutableStateOf(false) }
+    // Re-read the skills folder when the panel opens (imports / deletes happen in Settings or Explorer).
+    val all = remember(open) { runCatching { state.skills.load() }.getOrDefault(emptyList()) }
+    if (all.isEmpty()) return
+    val disabled = state.settings.disabledSkills
+    val (on, enabled) = com.openminis.desktop.skills.SkillChatScope.counts(all, disabled, conv.skillsOff)
+    Box {
+        TextButton(onClick = { open = true }) {
+            Icon(Lucide.BookOpen, null, Modifier.size(16.dp))
+            Spacer(Modifier.width(4.dp))
+            Text(tr("chatskills.badge", on, enabled), style = MaterialTheme.typography.labelMedium)
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            Column(Modifier.width(380.dp).padding(horizontal = 12.dp, vertical = 4.dp)) {
+                Text(tr("chatskills.title"), style = MaterialTheme.typography.titleSmall)
+                Text(tr("chatskills.hint"), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (state.isRunning && state.runningConversationId == conv.id)
+                    Text(tr("chatmcp.next_turn"), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.tertiary)
+                Spacer(Modifier.height(6.dp))
+                com.openminis.desktop.skills.SkillChatScope.rows(all, disabled, conv.skillsOff).forEach { row ->
+                    Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Switch(row.onInChat, { state.setChatSkill(conv.id, row.skill.id, it) }, enabled = row.globallyEnabled,
+                            modifier = Modifier.semantics { contentDescription = tr("chatskills.toggle", row.skill.name) })
+                        Spacer(Modifier.width(8.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(row.skill.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(if (row.globallyEnabled) row.skill.description.ifBlank { row.skill.id } else tr("chatmcp.off_in_settings"),
+                                style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
+                }
+                HorizontalDivider(Modifier.padding(vertical = 6.dp))
+                TextButton(onClick = { open = false; state.openSettings(SettingsPage.SKILLS) }) { Text(tr("chatskills.open_settings")) }
             }
         }
     }

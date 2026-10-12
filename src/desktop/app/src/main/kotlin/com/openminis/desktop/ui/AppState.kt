@@ -322,6 +322,7 @@ class AppState(
         val label = t.label.ifBlank { tr("scheduled.default_label") }
         val labelled = ToolApprover { req -> approver.approve(req.copy(summary = tr("scheduled.approval_prefix", label, req.summary))) }
         val runOff = withContext(Dispatchers.Main) { conversations.firstOrNull { it.id == convId }?.mcpOff.orEmpty().toSet() }
+        val runSkillsOff = withContext(Dispatchers.Main) { conversations.firstOrNull { it.id == convId }?.skillsOff.orEmpty().toSet() }
         val runEngine = AgentEngine(
             providerFactory = { st, ref -> DesktopProviderFactory.create(st, ref) },
             tools = subAgents.toolbox(com.openminis.desktop.mcp.McpToolbox(com.openminis.desktop.agent.RegistryToolbox(ToolRegistry({ settings }, memory, labelled, ::readRoots)), mcp) { runOff }),
@@ -334,7 +335,7 @@ class AppState(
         var final: ChatMessage? = null
         try {
             if (s.toolsEnabled && mcp.servers.any { it.enabled && it.name !in runOff }) withContext(Dispatchers.IO) { mcp.prepare(runOff) }
-            val promptText = withContext(Dispatchers.IO) { mainPrompt(s, runOff) }
+            val promptText = withContext(Dispatchers.IO) { mainPrompt(s, runOff, runSkillsOff) }
             final = withContext(Dispatchers.IO) {
                 runEngine.runTurn(conv.messages, s, promptText, ctx, object : TurnListener {
                     override fun onUpdate(message: ChatMessage) { latest.set(message); scope.launch(Dispatchers.Main) { scheduledStreaming[convId] = message } }
@@ -474,8 +475,8 @@ class AppState(
     }
 
     /** Main-chat system prompt: base + the sub agent roster when delegation is available. */
-    private fun mainPrompt(s: AppSettings, off: Set<String> = emptySet()): String {
-        val base = SystemPrompt.build(s, memory, skills)
+    private fun mainPrompt(s: AppSettings, off: Set<String> = emptySet(), skillsOff: Set<String> = emptySet()): String {
+        val base = SystemPrompt.build(s, memory, skills, skillsOff)
         val roster = if (s.toolsEnabled) subAgents.promptSection(0) else ""
         val mcpPart = if (s.toolsEnabled) mcpPromptSection(off) else ""
         return listOf(base, roster, mcpPart).filter { it.isNotBlank() }.joinToString("\n\n")
@@ -583,6 +584,11 @@ class AppState(
     }
 
     /** Switch one MCP server on/off for one chat; takes effect from the chat's next turn. */
+    /** P1-3: switch one skill for this chat only (applies from the next turn; the prompt is built per turn). */
+    fun setChatSkill(convId: String, skillId: String, on: Boolean) = mutate(convId, persist = true) {
+        it.copy(skillsOff = com.openminis.desktop.skills.SkillChatScope.withSkill(it.skillsOff, skillId, on))
+    }
+
     fun setChatMcp(convId: String, server: String, on: Boolean) = mutate(convId, persist = true) {
         it.copy(mcpOff = McpChatScope.withServer(it.mcpOff, server, on))
     }
@@ -672,6 +678,7 @@ class AppState(
         streaming = null
         val history = conv.messages
         val off = conv.mcpOff.toSet()
+        val skillsOff = conv.skillsOff.toSet()
         turnMcpOff = off
         val ctx = contextStateFor(conv)
         val latest = java.util.concurrent.atomic.AtomicReference<ChatMessage?>(null)
@@ -696,7 +703,7 @@ class AppState(
                         chatNotices[convId] = mcpDeniedNotice(r.denied)
                     }
                 }
-                val prompt = withContext(Dispatchers.IO) { mainPrompt(s, off) }
+                val prompt = withContext(Dispatchers.IO) { mainPrompt(s, off, skillsOff) }
                 final = withContext(Dispatchers.IO) { engine.runTurn(history, s, prompt, ctx, listener) }
             } catch (e: CancellationException) {
                 final = latest.get()
@@ -758,7 +765,7 @@ class AppState(
         val conv = conversations.firstOrNull { it.id == convId } ?: return
         val s = settings
         scope.launch(Dispatchers.IO) {
-            val r = runCatching { engine.measure(conv.messages, s, mainPrompt(s, conv.mcpOff.toSet()), contextStateFor(conv)) }.getOrNull()
+            val r = runCatching { engine.measure(conv.messages, s, mainPrompt(s, conv.mcpOff.toSet(), conv.skillsOff.toSet()), contextStateFor(conv)) }.getOrNull()
             withContext(Dispatchers.Main) { if (r != null) contextReadings[convId] = r else contextReadings.remove(convId) }
         }
     }

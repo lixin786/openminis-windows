@@ -15,7 +15,7 @@ object SystemPrompt {
     const val MATH_HINT = "Math is rendered from LaTeX: write inline math as \$…\$ (e.g. \$a^2+b^2=c^2\$) and display math as \$\$…\$\$ on its own lines; " +
         "\\(…\\) and \\[…\\] also work. Do not put formulas in code blocks unless the user wants the source. " +
         "Write money as plain text (\$5, \$5–\$10); escape a literal dollar sign as \\\$ if it could be read as math."
-    fun build(settings: AppSettings, memory: MemoryStore, skills: SkillLoader): String = buildString {
+    fun build(settings: AppSettings, memory: MemoryStore, skills: SkillLoader, skillsOff: Set<String> = emptySet()): String = buildString {
         appendLine("You are Minis, a capable AI agent running as the OpenMinis desktop app on the user's computer.")
         appendLine("Current time: ${ZonedDateTime.now().format(DateTimeFormatter.RFC_1123_DATE_TIME)}")
         appendLine("Operating system: ${System.getProperty("os.name")} ${System.getProperty("os.version")} (${System.getProperty("os.arch")})")
@@ -42,7 +42,7 @@ object SystemPrompt {
             }
         }
         if (settings.skillsEnabled && settings.toolsEnabled) {
-            skills.promptFragment(skills.load().filter { it.id !in settings.disabledSkills })?.let { appendLine(); appendLine(it) }
+            skills.promptFragment(com.openminis.desktop.skills.SkillChatScope.active(skills.load(), settings.disabledSkills, skillsOff))?.let { appendLine(); appendLine(it) }
         }
         if (settings.systemPrompt.isNotBlank()) {
             appendLine()

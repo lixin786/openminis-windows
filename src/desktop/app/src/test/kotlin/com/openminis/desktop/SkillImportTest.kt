@@ -108,6 +108,40 @@ class SkillImportTest {
         assertTrue(foreign.dir.exists())
     }
 
+    @Test fun perChatSkillOverride() {
+        importer.importFromContent(md("Alpha", "alpha desc")); importer.importFromContent(md("Beta", "beta desc")); importer.importFromContent(md("Gamma", "gamma desc"))
+        val all = loader.load()
+        val ids = all.associate { it.name to it.id }
+        val a = ids.getValue("Alpha"); val b = ids.getValue("Beta"); val g = ids.getValue("Gamma")
+        // Switches: no duplicates, switching back on removes the override.
+        assertEquals(listOf(b), com.openminis.desktop.skills.SkillChatScope.withSkill(emptyList(), b, on = false))
+        assertEquals(listOf(b), com.openminis.desktop.skills.SkillChatScope.withSkill(listOf(b), b, on = false))
+        assertEquals(emptyList(), com.openminis.desktop.skills.SkillChatScope.withSkill(listOf(b), b, on = true))
+        // Settings disables Gamma; the chat turns off Beta. A chat cannot turn a Settings-disabled skill back on.
+        val rows = com.openminis.desktop.skills.SkillChatScope.rows(all, listOf(g), listOf(b, "gone"))
+        assertEquals(listOf(true, false, false), rows.map { it.onInChat })
+        assertEquals(listOf(true, true, false), rows.map { it.globallyEnabled })
+        assertEquals(1 to 2, com.openminis.desktop.skills.SkillChatScope.counts(all, listOf(g), listOf(b)))
+        val mem = MemoryStore(TestSupport.tmp("om-mem"))
+        val s = AppSettings(disabledSkills = listOf(g))
+        // Default behaviour unchanged: no override = exactly the Settings set.
+        fun noClock(t: String) = t.lines().filterNot { it.startsWith("Current time:") }.joinToString("\n")
+        assertEquals(noClock(SystemPrompt.build(s, mem, loader)), noClock(SystemPrompt.build(s, mem, loader, emptySet())))
+        val chat = SystemPrompt.build(s, mem, loader, setOf(b))
+        assertTrue("alpha desc" in chat && "beta desc" !in chat && "gamma desc" !in chat, chat)
+        assertTrue("gamma desc" !in SystemPrompt.build(s, mem, loader, setOf(a)), "Settings-disabled stays off")
+        // Every skill off in the chat: no skills section at all.
+        assertFalse("<available_skills>" in SystemPrompt.build(s, mem, loader, setOf(a, b)))
+        // Persisted with the chat; old files without the field follow Settings.
+        val dir = TestSupport.tmp("om-conv")
+        val store = com.openminis.desktop.core.ConversationStore(dir)
+        store.save(com.openminis.desktop.core.Conversation(id = "x", skillsOff = listOf(b)))
+        java.io.File(dir, "old.json").writeText("""{"id":"old","title":"t","createdAt":1,"updatedAt":2}""")
+        val byId = store.loadAll().associateBy { it.id }
+        assertEquals(listOf(b), byId.getValue("x").skillsOff)
+        assertEquals(emptyList(), byId.getValue("old").skillsOff)
+    }
+
     @Test fun disabledSkillsAreLeftOutOfThePrompt() {
         importer.importFromContent(md("Alpha", "alpha desc")); importer.importFromContent(md("Beta", "beta desc"))
         val mem = MemoryStore(TestSupport.tmp("om-mem"))
