@@ -34,6 +34,8 @@ dependencies {
     // Android ships org.json in the framework; on the JVM we pull the reference impl.
     implementation("org.json:json:20240303")
     implementation("com.mikepenz:multiplatform-markdown-renderer-m3-jvm:0.28.0")
+    // P2-4: LaTeX math in chat bubbles. Pure Java (~1 MB incl. fonts), GPL-2.0-or-later with classpath exception.
+    implementation("org.scilab.forge:jlatexmath:1.0.7")
     // Pure-Java jieba (Apache-2.0) — stands in for upstream's CppJieba JNI in shared/JiebaEngine.kt.
     implementation("com.huaban:jieba-analysis:1.0.2")
     // P3-1: Windows DPAPI (CryptProtectData, CurrentUser scope) for API keys — JNA (Apache-2.0 / LGPL-2.1 dual).

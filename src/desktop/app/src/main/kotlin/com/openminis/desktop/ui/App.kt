@@ -60,7 +60,6 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.layout.ContentScale
-import com.mikepenz.markdown.m3.Markdown
 import com.openminis.desktop.core.Attachment
 import com.openminis.desktop.core.AttachmentKind
 import com.openminis.desktop.core.AttachmentStore
@@ -951,7 +950,8 @@ private fun RoundView(r: Round) {
     if (r.text.isNotBlank()) {
         SelectionContainer {
             val t = MaterialTheme.typography
-            Markdown(
+            // P2-4: LaTeX math ($…$, $$…$$, \(…\), \[…\]) via JLaTeXMath; also escapes literal $ for the GFM parser.
+            com.openminis.desktop.ui.math.ChatMarkdown(
                 content = r.text, modifier = Modifier.fillMaxWidth(),
                 typography = com.mikepenz.markdown.m3.markdownTypography(
                     h1 = t.headlineSmall, h2 = t.titleLarge, h3 = t.titleMedium,

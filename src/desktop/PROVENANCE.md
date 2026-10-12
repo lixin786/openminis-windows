@@ -46,6 +46,7 @@ Distributed binaries (jar / MSI / EXE) also contain these libraries, each under 
 | org.json | Public domain ("JSON License" removed since 20231013) |
 | com.mikepenz multiplatform-markdown-renderer | Apache-2.0 |
 | com.huaban jieba-analysis 1.0.2 (+ commons-lang3) | Apache-2.0 |
+| JLaTeXMath 1.0.7 (org.scilab.forge; math in chat) | GPL-2.0-or-later with classpath exception (used under GPL-3.0); bundled fonts: Knuth / BaKoMa, SIL OFL-1.1, dsrom — licence texts inside the jar under `org/scilab/forge/jlatexmath/fonts/licences/` |
 | JNA / jna-platform 5.15.0 (Windows DPAPI for API keys) | Apache-2.0 / LGPL-2.1 dual license, used under Apache-2.0 |
 | Lucide icons (lucide-static 1.55.0; 57 icons generated into `ui/icons/LucideIcons.kt` by `tools/gen-lucide-icons.py`) | ISC — `third_party/lucide/LICENSE` |
 | Inter 4.1 (fonts/Inter-*.ttf) | SIL OFL-1.1 — `third_party/inter/OFL.txt` |
