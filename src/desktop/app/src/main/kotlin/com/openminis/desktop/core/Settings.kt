@@ -98,6 +98,15 @@ data class AppSettings(
     val network: com.openminis.desktop.net.NetworkSettings = com.openminis.desktop.net.NetworkSettings(),
     /** [P1-3] Skill folder ids switched off in Settings › Skills (kept on disk, left out of the prompt). */
     val disabledSkills: List<String> = emptyList(),
+    /**
+     * [P2-1] Settings › Tools › "Enable browser tool" (default ON — user's decision 2026-10-13). Off = the
+     * `browser` tool is neither offered nor mentioned in the system prompt.
+     */
+    val browserEnabled: Boolean = true,
+    /** [P2-1] Registrable domains (eTLD+1) the user chose "Always allow" for; others are asked once per conversation. */
+    val browserAllowlist: List<String> = emptyList(),
+    /** [P2-1] Path to msedge.exe / chrome.exe; "" = find Edge, then Chrome, automatically. */
+    val browserExecutable: String = "",
     /** [batch13] Settings › System › Phone link: the read-only MCP server phones connect to (off by default). */
     val remoteMcp: com.openminis.desktop.remote.RemoteMcpSettings = com.openminis.desktop.remote.RemoteMcpSettings(),
 ) {

@@ -103,6 +103,7 @@ private fun approvalIcon(k: ApprovalKind) = when (k) {
     ApprovalKind.MCP_START, ApprovalKind.MCP_CALL -> Lucide.Puzzle
     ApprovalKind.SCHEDULED -> Lucide.CalendarClock
     ApprovalKind.SUBAGENT -> Lucide.Users
+    ApprovalKind.BROWSER -> Lucide.Globe
     ApprovalKind.OTHER -> Lucide.Shield
 }
 

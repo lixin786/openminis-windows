@@ -133,7 +133,7 @@ class AppState(
     /** Busy with something a restore must not overwrite (a turn, a compaction or a scheduled run). */
     val busyForRestore: Boolean get() = isRunning || compactingConversationId != null || scheduledRunning.isNotEmpty()
     /** Right before the swap: nothing in the background may write into the folders being replaced. */
-    fun freezeForRestore() { runCatching { scheduler.stop() }; runCatching { remote.shutdown() }; runCatching { mcp.shutdown() } }
+    fun freezeForRestore() { runCatching { scheduler.stop() }; runCatching { remote.shutdown() }; runCatching { mcp.shutdown() }; runCatching { browser.stopBrowser() } }
     /** Transient line under the chat ("Compacting context…", "Rate limited — retrying (1/3)…"). */
     var statusText by mutableStateOf<String?>(null)
         private set
@@ -209,12 +209,32 @@ class AppState(
         private set
     /** MCP servers switched off for the chat the main loop is running (set at turn start; one main turn at a time). */
     @Volatile private var turnMcpOff: Set<String> = emptySet()
+    /** [P2-1] Counts main-loop user turns (the browser's navigation budget is per turn). */
+    @Volatile private var mainTurnSeq: Long = 0
+    /** [P2-1] Headless Edge / Chrome behind the filtering proxy; started on first use, killed when idle or at exit. */
+    val browser = com.openminis.desktop.browser.BrowserService(
+        profileDir = File(paths.root, "browser-profile"),
+        executable = { com.openminis.desktop.browser.BrowserLocator.find(settings.browserExecutable) },
+        upstream = { host, https -> com.openminis.desktop.net.DesktopHttp.select(java.net.URI(if (https) "https" else "http", if (host.contains(':')) "[$host]" else host, "/", null)).firstOrNull() ?: java.net.Proxy.NO_PROXY },
+        upstreamCredentials = { p -> com.openminis.desktop.net.DesktopHttp.credentialsFor(p) },
+        screenshotDir = { File(settings.workspace(), "browser-screenshots") },
+    )
+    /** [P2-1] "Always allow" in the browser approval: add the registrable domain to the Settings allowlist. */
+    private fun allowBrowserDomainAlways(domain: String) {
+        scope.launch(Dispatchers.Main) {
+            if (domain !in settings.browserAllowlist) updateSettings(settings.copy(browserAllowlist = settings.browserAllowlist + domain))
+        }
+    }
     // Lazy: the toolbox needs the scheduler, which is declared further down.
     private val engine by lazy {
         AgentEngine(
             providerFactory = { s, ref -> DesktopProviderFactory.create(s, ref) },
             tools = com.openminis.desktop.scheduled.ScheduledToolbox(
-                subAgents.toolbox(com.openminis.desktop.mcp.McpToolbox(com.openminis.desktop.agent.RegistryToolbox(tools), mcp) { turnMcpOff }),
+                com.openminis.desktop.browser.BrowserToolbox(
+                    subAgents.toolbox(com.openminis.desktop.mcp.McpToolbox(com.openminis.desktop.agent.RegistryToolbox(tools), mcp) { turnMcpOff }),
+                    browser, { settings }, approver, conversation = { runningConversationId }, turn = { mainTurnSeq },
+                    alwaysAllow = ::allowBrowserDomainAlways,
+                ),
                 scheduler, approver, currentConversation = { runningConversationId },
                 describe = { t -> describeTrigger(t, lang = "en") { id -> scheduler.list().firstOrNull { it.id == id }?.label ?: id } },
                 describeUi = { t -> describeTrigger(t) { id -> scheduler.list().firstOrNull { it.id == id }?.label ?: id } },
@@ -234,7 +254,7 @@ class AppState(
     fun updateMcpServers(list: List<com.openminis.desktop.mcp.McpServerConfig>) = scope.launch(Dispatchers.IO) { mcp.setServers(list) }
     fun connectMcp(sv: com.openminis.desktop.mcp.McpServerConfig) = scope.launch(Dispatchers.IO) { mcp.connect(sv) }
     fun shutdown() {
-        runCatching { scheduler.stop() }; runCatching { mcp.shutdown() }; runCatching { remote.shutdown() }
+        runCatching { scheduler.stop() }; runCatching { mcp.shutdown() }; runCatching { remote.shutdown() }; runCatching { browser.shutdown() }
         if (!headless && schedulerLock.held) { runCatching { headlessState.update { it.copy(checkedUpTo = System.currentTimeMillis()) } }; schedulerLock.release() }
     }
 
@@ -475,11 +495,13 @@ class AppState(
     }
 
     /** Main-chat system prompt: base + the sub agent roster when delegation is available. */
-    private fun mainPrompt(s: AppSettings, off: Set<String> = emptySet(), skillsOff: Set<String> = emptySet()): String {
+    /** [browser] = the main chat's loop (the only one with the `browser` tool; scheduled runs have none). */
+    private fun mainPrompt(s: AppSettings, off: Set<String> = emptySet(), skillsOff: Set<String> = emptySet(), browser: Boolean = false): String {
         val base = SystemPrompt.build(s, memory, skills, skillsOff)
         val roster = if (s.toolsEnabled) subAgents.promptSection(0) else ""
         val mcpPart = if (s.toolsEnabled) mcpPromptSection(off) else ""
-        return listOf(base, roster, mcpPart).filter { it.isNotBlank() }.joinToString("\n\n")
+        val browserPart = if (browser && com.openminis.desktop.browser.BrowserToolSpec.enabled(s)) com.openminis.desktop.browser.BrowserToolSpec.PROMPT else ""
+        return listOf(base, roster, mcpPart, browserPart).filter { it.isNotBlank() }.joinToString("\n\n")
     }
 
     /** Upstream MCPRepository.mcpPromptFragment, desktop wording: the tools are native `mcp__…` tools. */
@@ -508,7 +530,7 @@ class AppState(
             }
         com.openminis.desktop.net.DesktopHttp.update(settings.network)
         conversations.addAll(store.loadAll())
-        Runtime.getRuntime().addShutdownHook(Thread { runCatching { mcp.shutdown() }; runCatching { remote.shutdown() } })
+        Runtime.getRuntime().addShutdownHook(Thread { runCatching { mcp.shutdown() }; runCatching { remote.shutdown() }; runCatching { browser.shutdown() } })
         if (!headless) {
             // P3-1 follow-up: move an old plain-text phone-link token into DPAPI even while the phone link is off.
             scope.launch(Dispatchers.IO) { runCatching { remote.tokens.migrate() }; withContext(Dispatchers.Main) { remoteTick++ } }
@@ -536,6 +558,7 @@ class AppState(
         if (s.language != settings.language) com.openminis.desktop.i18n.I18n.apply(s.language)
         if (s.network != settings.network) com.openminis.desktop.net.DesktopHttp.update(s.network)
         if (s.remoteMcp != settings.remoteMcp) scope.launch(Dispatchers.IO) { remote.apply(s.remoteMcp) }
+        if (settings.browserEnabled && !(s.browserEnabled && s.toolsEnabled)) scope.launch(Dispatchers.IO) { browser.stopBrowser() }
         settings = s
         com.openminis.app.data.FastModePrefs.setEnabled(false)
         scope.launch(Dispatchers.IO) {
@@ -680,6 +703,7 @@ class AppState(
         val off = conv.mcpOff.toSet()
         val skillsOff = conv.skillsOff.toSet()
         turnMcpOff = off
+        mainTurnSeq++
         val ctx = contextStateFor(conv)
         val latest = java.util.concurrent.atomic.AtomicReference<ChatMessage?>(null)
         val listener = object : TurnListener {
@@ -703,7 +727,7 @@ class AppState(
                         chatNotices[convId] = mcpDeniedNotice(r.denied)
                     }
                 }
-                val prompt = withContext(Dispatchers.IO) { mainPrompt(s, off, skillsOff) }
+                val prompt = withContext(Dispatchers.IO) { mainPrompt(s, off, skillsOff, browser = true) }
                 final = withContext(Dispatchers.IO) { engine.runTurn(history, s, prompt, ctx, listener) }
             } catch (e: CancellationException) {
                 final = latest.get()
@@ -765,7 +789,7 @@ class AppState(
         val conv = conversations.firstOrNull { it.id == convId } ?: return
         val s = settings
         scope.launch(Dispatchers.IO) {
-            val r = runCatching { engine.measure(conv.messages, s, mainPrompt(s, conv.mcpOff.toSet(), conv.skillsOff.toSet()), contextStateFor(conv)) }.getOrNull()
+            val r = runCatching { engine.measure(conv.messages, s, mainPrompt(s, conv.mcpOff.toSet(), conv.skillsOff.toSet(), browser = true), contextStateFor(conv)) }.getOrNull()
             withContext(Dispatchers.Main) { if (r != null) contextReadings[convId] = r else contextReadings.remove(convId) }
         }
     }

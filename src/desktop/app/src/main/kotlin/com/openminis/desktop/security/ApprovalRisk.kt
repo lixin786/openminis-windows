@@ -3,7 +3,7 @@
 // Copyright (C) OpenMinis contributors. Licensed under the GNU GPL v3 (see LICENSE).
 package com.openminis.desktop.security
 
-enum class ApprovalKind { SHELL, FILE, MCP_START, MCP_CALL, SCHEDULED, SUBAGENT, OTHER }
+enum class ApprovalKind { SHELL, FILE, MCP_START, MCP_CALL, SCHEDULED, SUBAGENT, BROWSER, OTHER }
 
 /** LOW = inline one-line confirm; MEDIUM = card dialog; HIGH = card + "I understand" / type-the-name. */
 enum class Risk { LOW, MEDIUM, HIGH }

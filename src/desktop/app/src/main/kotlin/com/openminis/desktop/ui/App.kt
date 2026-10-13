@@ -1076,6 +1076,7 @@ internal fun kindIcon(k: ToolPresentation.Kind) = when (k) {
     ToolPresentation.Kind.MCP -> Lucide.Puzzle
     ToolPresentation.Kind.SUBAGENT -> Lucide.Users
     ToolPresentation.Kind.SCHEDULED -> Lucide.CalendarClock
+    ToolPresentation.Kind.BROWSER -> Lucide.Globe
     ToolPresentation.Kind.OTHER -> Lucide.Wrench
 }
 

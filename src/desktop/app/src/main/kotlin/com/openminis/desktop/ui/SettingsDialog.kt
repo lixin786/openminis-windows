@@ -296,6 +296,7 @@ fun SettingsDialog(state: AppState, onClose: () -> Unit) {
                                 if (chooser.showOpenDialog(null) == JFileChooser.APPROVE_OPTION) draft = draft.copy(workspaceDir = chooser.selectedFile.absolutePath)
                             }) { Text(tr("settings.browse")) }
                         }
+                        BrowserSection(draft) { draft = it }
 
                                 }
                                 SettingsPage.MCP -> McpSection(state, mcpDraft) { mcpDraft = it }

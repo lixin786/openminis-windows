@@ -241,6 +241,9 @@ object DesktopHttp {
         }
     }
 
+    /** [P2-1] Basic credentials for [proxy] under the current settings (the browser's filtering proxy chains to it). */
+    fun credentialsFor(proxy: Proxy?): Pair<String, String>? = if (proxy == null || proxy.type() != Proxy.Type.HTTP) null else proxyCredentials(proxy)
+
     private fun proxyCredentials(proxy: Proxy?): Pair<String, String>? {
         val s = settings
         if (s.proxyMode == ProxyMode.MANUAL && s.proxyUser.isNotBlank()) return s.proxyUser to s.proxyPassword

@@ -5,7 +5,7 @@ import com.openminis.desktop.core.ToolStatus
 
 /** What a tool card shows besides the raw call: kind (icon), readable name, duration, error line, grouping. Pure, unit-tested. */
 object ToolPresentation {
-    enum class Kind { SHELL, FILE, MEMORY, MCP, SUBAGENT, SCHEDULED, OTHER }
+    enum class Kind { SHELL, FILE, MEMORY, MCP, SUBAGENT, SCHEDULED, BROWSER, OTHER }
 
     /** Results longer than this are cut in the card (Copy still copies all of it). */
     const val RESULT_LIMIT = 20_000
@@ -19,6 +19,7 @@ object ToolPresentation {
         name.startsWith("mcp__") -> Kind.MCP
         name == com.openminis.desktop.subagents.SubAgentProtocol.TOOL_NAME -> Kind.SUBAGENT
         name.startsWith("scheduled_") -> Kind.SCHEDULED
+        name == com.openminis.desktop.browser.BrowserToolSpec.NAME -> Kind.BROWSER
         else -> Kind.OTHER
     }
 
